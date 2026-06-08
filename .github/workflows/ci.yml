@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    # Trusted runs (push + same-repo PRs) use the Boundless-Studios self-hosted
+    # desktop fleet (gaia-ci-desktop) instead of GitHub Actions minutes. Fork PRs
+    # stay on ubuntu-latest — this repo is public; untrusted code never runs on
+    # our hardware.
+    runs-on: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) && 'gaia-ci-desktop' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax (bash -n)
+        run: |
+          set -e
+          bash -n bin/worktree-deck.sh
+          for f in lib/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: error
+          # The vendored TUI sources sibling libs at runtime; SC1091 (can't follow
+          # source) is expected in static analysis.
+          additional_files: 'worktree-deck.sh'
+        env:
+          SHELLCHECK_OPTS: -e SC1091
