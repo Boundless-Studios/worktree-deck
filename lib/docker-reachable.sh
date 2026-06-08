@@ -10,7 +10,7 @@
 # many docker calls in a loop and wedge for many minutes.
 #
 # Default behavior — transparent fallback, tty-aware
-#   gaia_docker_reachable probes the current DOCKER_HOST. If it's ssh://
+#   wtd_docker_reachable probes the current DOCKER_HOST. If it's ssh://
 #   and the probe fails, we silently `unset DOCKER_HOST` in this process
 #   and re-probe the local daemon. Callers (cleanup, wc, …) just continue.
 #   Mirrors what the top-level Makefile already does (Makefile:52-69).
@@ -38,21 +38,21 @@
 #   and silently flip the session to local Docker — set this before probing.
 #
 # Public API
-#   gaia_docker_reachable [timeout_s]
+#   wtd_docker_reachable [timeout_s]
 #     0 if any docker daemon answers within timeout_s — the current one
 #     or the local fallback. 1 only if both are unreachable. Omit the arg
 #     to get the tty-aware default. Caches the result in
 #     WTD_DOCKER_REACHABLE_CACHED (yes|no). When fallback happens, sets
 #     WTD_DOCKER_FELL_BACK_FROM to the original DOCKER_HOST.
 #
-#   gaia_docker_wake_then_reprobe [poll_total_s] [poll_interval_s]
-#     Called automatically from gaia_docker_reachable when interactive
+#   wtd_docker_wake_then_reprobe [poll_total_s] [poll_interval_s]
+#     Called automatically from wtd_docker_reachable when interactive
 #     and a wake hook exists. Also exported so callers can invoke it
 #     directly with custom polling budgets.
 #
 # Wake hook search order (first executable wins)
-#   1) $GAIA_DESKTOP_WAKE_SCRIPT
-#   2) $HOME/.config/gaia/desktop-wake.sh
+#   1) $WTD_DESKTOP_WAKE_SCRIPT
+#   2) $HOME/.config/worktree-deck/desktop-wake.sh
 #   3) <repo_root>/scripts/local/desktop-wake.sh   (.gitignored)
 #
 # Hook contract
@@ -69,7 +69,7 @@ _WTD_DOCKER_REACHABLE_LOADED=1
 # Treat a caller as interactive if any of stdin/stdout/stderr is a tty.
 # stderr is the most reliable signal — it's rarely redirected even when
 # stdout is piped into something else.
-_gaia_is_interactive() {
+_wtd_is_interactive() {
     [[ -t 2 ]] || [[ -t 1 ]] || [[ -t 0 ]]
 }
 
@@ -81,7 +81,7 @@ _gaia_is_interactive() {
 # `docker info` under a hard background+kill timeout. Works for any DOCKER_HOST
 # scheme: for ssh:// the docker CLI uses its own ssh transport, so this answers
 # the real question even where a raw `ssh` probe is unavailable.
-_gaia_docker_info_probe() {
+_wtd_docker_info_probe() {
     local timeout="${1:-3}"
     local out_file; out_file="$(mktemp -t docker-probe.XXXXXX)"
     docker info --format ' ' >"$out_file" 2>&1 &
@@ -103,7 +103,7 @@ _gaia_docker_info_probe() {
     return "$rc"
 }
 
-_gaia_docker_probe_one() {
+_wtd_docker_probe_one() {
     local timeout="${1:-3}"
     case "${DOCKER_HOST:-}" in
         ssh://*)
@@ -116,28 +116,28 @@ _gaia_docker_probe_one() {
                 "$userhost" true >/dev/null 2>&1
             ;;
         *)
-            _gaia_docker_info_probe "$timeout"
+            _wtd_docker_info_probe "$timeout"
             ;;
     esac
 }
 
 # Authoritative reachability via the docker CLI (`docker info`), independent of
-# the DOCKER_HOST scheme. Use as a BACKSTOP after gaia_docker_reachable when a
+# the DOCKER_HOST scheme. Use as a BACKSTOP after wtd_docker_reachable when a
 # false negative from the raw ssh:// probe would be costly — e.g. a preflight
 # gate in a sandbox that blocks raw `ssh` but where the docker CLI still reaches
 # the remote daemon over its own ssh transport. Mirrors the Makefile's
 # docker-info-based remote detection. Does NOT mutate DOCKER_HOST or the cache.
-gaia_docker_cli_reachable() {
-    _gaia_docker_info_probe "${1:-3}"
+wtd_docker_cli_reachable() {
+    _wtd_docker_info_probe "${1:-3}"
 }
 
-gaia_docker_reachable() {
+wtd_docker_reachable() {
     # No-arg call → tty-aware default. Interactive callers absorb a
     # directed-packet wake (S3 sleep / WSL2 vmIdleTimeout) within the
     # window; non-interactive callers fall back fast.
     local timeout="${1:-}"
     local interactive=0
-    if _gaia_is_interactive; then interactive=1; fi
+    if _wtd_is_interactive; then interactive=1; fi
     if [[ -z "$timeout" ]]; then
         # Explicit arg wins; else honor DOCKER_PROBE_TIMEOUT (matches the
         # Makefile probe, PR #1905); else tty-aware default.
@@ -154,7 +154,7 @@ gaia_docker_reachable() {
         return $?
     fi
 
-    if _gaia_docker_probe_one "$timeout"; then
+    if _wtd_docker_probe_one "$timeout"; then
         export WTD_DOCKER_REACHABLE_CACHED=yes
         return 0
     fi
@@ -167,8 +167,8 @@ gaia_docker_reachable() {
 
         if [[ "$interactive" -eq 1 ]] \
            && [[ "${WTD_DOCKER_SKIP_WAKE:-}" != "1" ]] \
-           && _gaia_docker_wake_hook_path >/dev/null 2>&1; then
-            if gaia_docker_wake_then_reprobe 30 3; then
+           && _wtd_docker_wake_hook_path >/dev/null 2>&1; then
+            if wtd_docker_wake_then_reprobe 30 3; then
                 export WTD_DOCKER_REACHABLE_CACHED=yes
                 return 0
             fi
@@ -186,7 +186,7 @@ gaia_docker_reachable() {
         # Transparent fallback to the local daemon. We modify DOCKER_HOST
         # only in this process; the user's shell env is untouched.
         export DOCKER_HOST=""
-        if _gaia_docker_probe_one 2; then
+        if _wtd_docker_probe_one 2; then
             echo "🌐 remote Docker (${prev_host}) slow/unreachable within ${timeout}s — using local daemon" >&2
             export WTD_DOCKER_REACHABLE_CACHED=yes
             export WTD_DOCKER_FELL_BACK_FROM="$prev_host"
@@ -201,7 +201,7 @@ gaia_docker_reachable() {
     return 1
 }
 
-gaia_docker_select() {
+wtd_docker_select() {
     unset WTD_DOCKER_MODE WTD_DOCKER_SELECTED_HOST WTD_DOCKER_FALLBACK_REASON WTD_DOCKER_DAEMON_NAME
 
     if [[ "${WTD_DOCKER_FORCE_LOCAL:-}" == "1" ]]; then
@@ -212,7 +212,7 @@ gaia_docker_select() {
     elif [[ -n "${DOCKER_HOST:-}" ]]; then
         local intended_host="$DOCKER_HOST"
         unset WTD_DOCKER_REACHABLE_CACHED WTD_DOCKER_FELL_BACK_FROM
-        if gaia_docker_reachable "$@"; then
+        if wtd_docker_reachable "$@"; then
             if [[ -n "${WTD_DOCKER_FELL_BACK_FROM:-}" ]]; then
                 export WTD_DOCKER_MODE="local-fallback"
                 export WTD_DOCKER_SELECTED_HOST=""
@@ -230,7 +230,7 @@ gaia_docker_select() {
         fi
     else
         unset WTD_DOCKER_REACHABLE_CACHED WTD_DOCKER_FELL_BACK_FROM
-        if gaia_docker_reachable "$@"; then
+        if wtd_docker_reachable "$@"; then
             export WTD_DOCKER_MODE="local-forced"
             export WTD_DOCKER_SELECTED_HOST=""
             export WTD_DOCKER_FALLBACK_REASON=""
@@ -248,11 +248,11 @@ gaia_docker_select() {
     return 0
 }
 
-_gaia_docker_wake_hook_path() {
+_wtd_docker_wake_hook_path() {
     local script_dir; script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local candidates=(
-        "${GAIA_DESKTOP_WAKE_SCRIPT:-}"
-        "$HOME/.config/gaia/desktop-wake.sh"
+        "${WTD_DESKTOP_WAKE_SCRIPT:-}"
+        "$HOME/.config/worktree-deck/desktop-wake.sh"
         "$script_dir/../local/desktop-wake.sh"
     )
     for c in "${candidates[@]}"; do
@@ -264,12 +264,12 @@ _gaia_docker_wake_hook_path() {
     return 1
 }
 
-gaia_docker_wake_then_reprobe() {
+wtd_docker_wake_then_reprobe() {
     local total="${1:-60}"
     local interval="${2:-5}"
 
     local hook
-    if ! hook="$(_gaia_docker_wake_hook_path)"; then
+    if ! hook="$(_wtd_docker_wake_hook_path)"; then
         return 1
     fi
 
@@ -283,7 +283,7 @@ gaia_docker_wake_then_reprobe() {
     local waited=0
     while [[ "$waited" -lt "$total" ]]; do
         unset WTD_DOCKER_REACHABLE_CACHED
-        if gaia_docker_reachable 3; then
+        if wtd_docker_reachable 3; then
             echo "🌐 Docker daemon reachable after ${waited}s. Continuing." >&2
             return 0
         fi

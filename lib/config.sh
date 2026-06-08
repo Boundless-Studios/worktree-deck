@@ -57,10 +57,34 @@ fi
 # Optional remote Docker daemon (ssh://user@host). Empty => local daemon only.
 : "${WTD_REMOTE_DOCKER_HOST:=}"
 
-# Optional background daemons the console can manage (names resolved by lib/daemon.sh).
+# Container-name prefix that identifies THIS project's containers, used by the
+# dead/orphan/stop-all sweeps. Empty => those destructive sweeps are disabled
+# (so we never `docker rm -f` containers from other projects). Set it to the
+# common prefix of your WTD_SERVICE_TEMPLATES, e.g. "myapp-".
+: "${WTD_CONTAINER_PREFIX:=}"
+
+# Shared-infra containers to NEVER sweep (space-separated), e.g. a shared
+# postgres/rabbitmq used across worktrees.
+: "${WTD_SHARED_CONTAINERS:=}"
+
+# Optional background daemons the console can manage. Declare each one by adding
+# its name to WTD_DAEMONS and filling the registry maps below in your config:
+#   WTD_DAEMONS=(dash)
+#   WTD_DAEMON_CMD[dash]="exec agentic-pr-dash serve"
+#   WTD_DAEMON_URL[dash]="http://localhost:9000"     # optional
+#   WTD_DAEMON_TYPE[dash]="persistent"               # or "loop:<seconds>"
+#   WTD_DAEMON_PATTERN[dash]="agentic-pr-dash"        # pgrep pattern for orphans
 if [[ -z "${WTD_DAEMONS+x}" ]]; then
     WTD_DAEMONS=()
 fi
+# Autostart subset (default: none). Names the console may start unattended.
+if [[ -z "${WTD_DAEMONS_AUTOSTART+x}" ]]; then
+    WTD_DAEMONS_AUTOSTART=()
+fi
+declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/dev/null || true
+
+# Where daemon pid/log files live.
+: "${WTD_DAEMON_DIR:=$HOME/.cache/worktree-deck/daemons}"
 
 # Optional: a command the console pipes session lifecycle events to
 # (e.g. "agentic-pr-dash record"). Empty => no session bridge.

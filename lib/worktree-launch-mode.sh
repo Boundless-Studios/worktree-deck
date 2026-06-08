@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Shared helpers for selecting which interactive coding CLI to launch from
-# Gaia worktree utilities.
+# worktree-deck launch-mode helpers.
 
-gaia_default_launch_flag() {
-    printf '%s\n' "${GAIA_WORKTREE_LAUNCH_FLAG:---codex}"
+wtd_default_launch_flag() {
+    printf '%s\n' "${WTD_LAUNCH_FLAG:---codex}"
 }
 
-gaia_is_launch_selector() {
+wtd_is_launch_selector() {
     case "${1:-}" in
         --codex|--claude|codex|claude)
             return 0
@@ -17,10 +17,10 @@ gaia_is_launch_selector() {
     esac
 }
 
-gaia_normalize_launch_flag() {
+wtd_normalize_launch_flag() {
     case "${1:-}" in
         "" )
-            gaia_default_launch_flag
+            wtd_default_launch_flag
             ;;
         --codex|codex)
             printf '%s\n' "--codex"
@@ -34,8 +34,8 @@ gaia_normalize_launch_flag() {
     esac
 }
 
-gaia_launch_cli_from_flag() {
-    case "$(gaia_normalize_launch_flag "${1:-}")" in
+wtd_launch_cli_from_flag() {
+    case "$(wtd_normalize_launch_flag "${1:-}")" in
         --claude)
             printf '%s\n' "claude"
             ;;
@@ -45,8 +45,8 @@ gaia_launch_cli_from_flag() {
     esac
 }
 
-gaia_launch_label_from_flag() {
-    case "$(gaia_normalize_launch_flag "${1:-}")" in
+wtd_launch_label_from_flag() {
+    case "$(wtd_normalize_launch_flag "${1:-}")" in
         --claude)
             printf '%s\n' "Claude Code"
             ;;

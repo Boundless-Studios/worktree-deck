@@ -22,16 +22,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(cd "${SCRIPT_DIR}/../lib" && pwd)"
 # shellcheck source=../lib/worktree-launch-mode.sh
 source "${LIB_DIR}/worktree-launch-mode.sh"
-# shellcheck source=../lib/worktree-env-tag.sh
-source "${LIB_DIR}/worktree-env-tag.sh"
 # shellcheck source=../lib/docker-reachable.sh
 source "${LIB_DIR}/docker-reachable.sh"
 # shellcheck source=../lib/config.sh
 source "${LIB_DIR}/config.sh"
 
-DEFAULT_LAUNCH_FLAG="$(gaia_default_launch_flag)"
-if gaia_is_launch_selector "${1:-}"; then
-    DEFAULT_LAUNCH_FLAG="$(gaia_normalize_launch_flag "$1")"
+DEFAULT_LAUNCH_FLAG="$(wtd_default_launch_flag)"
+if wtd_is_launch_selector "${1:-}"; then
+    DEFAULT_LAUNCH_FLAG="$(wtd_normalize_launch_flag "$1")"
     shift
 fi
 
@@ -59,37 +57,17 @@ NC='\033[0m' # No Color
 # shellcheck source=../lib/daemon.sh
 DAEMON_COLOR=1 source "${LIB_DIR}/daemon.sh"
 
-CLAUDE_USAGE_STATUS="$HOME/.claude/claude-usage-status.json"
-
-# --- Per-user console config ---
-# Persistent, per-user toggles for which daemons the console auto-starts and
-# displays. Edit via [C]onfig in the main menu, or hand-edit the file.
+# --- Per-user console state ---
+# Persistent per-user overrides (e.g. WTD_DAEMONS_DISABLED). Sourced if present.
 CONSOLE_CONFIG_FILE="${WORKTREE_DECK_STATE:-$HOME/.config/worktree-deck/console.conf}"
 
-# Defaults — overridden by sourcing the config file if it exists.
-WC_DAEMON_PR_DASHBOARD_ENABLED=true
-WC_DAEMON_CLAUDE_USAGE_ENABLED=true
-WC_DAEMON_TRACE_VIEWER_ENABLED=true
-# Opt-in (default OFF): when true, a Claude session that pushes/opens a PR for
-# review auto-arms an in-session review-watch loop (/loop 3m /pr-maintenance-check)
-# via .claude/hooks/arm-pr-watch.sh. Not all users want an always-on loop. (BOU-1358)
-WC_PR_WATCH_AUTOLOOP=false
-
-# Map a daemon name to the config var that gates it.
-_wc_daemon_var() {
-    case "$1" in
-        pr-dashboard) echo "WC_DAEMON_PR_DASHBOARD_ENABLED" ;;
-        claude-usage) echo "WC_DAEMON_CLAUDE_USAGE_ENABLED" ;;
-        trace-viewer) echo "WC_DAEMON_TRACE_VIEWER_ENABLED" ;;
-        *) echo "" ;;
-    esac
-}
-
-# Returns 0 if the daemon is enabled (or unknown — we default to on).
+# A daemon is "enabled" unless the user disabled it in WTD_DAEMONS_DISABLED.
 is_daemon_enabled() {
-    local var; var="$(_wc_daemon_var "$1")"
-    [[ -z "$var" ]] && return 0
-    [[ "${!var:-true}" == "true" ]]
+    local name="$1" d
+    for d in ${WTD_DAEMONS_DISABLED:-}; do
+        [[ "$d" == "$name" ]] && return 1
+    done
+    return 0
 }
 
 load_console_config() {
@@ -101,75 +79,10 @@ load_console_config() {
 
 save_console_config() {
     mkdir -p "$(dirname "$CONSOLE_CONFIG_FILE")" 2>/dev/null || true
-    cat > "$CONSOLE_CONFIG_FILE" <<EOF
-# Gaia worktree console — per-user settings
-# Toggles control which daemons the console auto-starts and displays.
-# Edit via [C]onfig in the console, or by hand. Values: true | false.
-WC_DAEMON_PR_DASHBOARD_ENABLED=${WC_DAEMON_PR_DASHBOARD_ENABLED}
-WC_DAEMON_CLAUDE_USAGE_ENABLED=${WC_DAEMON_CLAUDE_USAGE_ENABLED}
-WC_DAEMON_TRACE_VIEWER_ENABLED=${WC_DAEMON_TRACE_VIEWER_ENABLED}
-# Opt-in: auto-arm an in-session PR review-watch loop after Claude pushes a PR. (BOU-1358)
-WC_PR_WATCH_AUTOLOOP=${WC_PR_WATCH_AUTOLOOP:-false}
-EOF
-}
-
-claude_usage_status_line() {
-    if daemon_is_running "claude-usage"; then
-        local pid
-        pid=$(daemon_pid "claude-usage")
-        local last_run="never"
-        local tokens=""
-        local summary=""
-        if [[ -f "$CLAUDE_USAGE_STATUS" ]] && command -v python3 &>/dev/null; then
-            last_run=$(python3 -c "
-import json, datetime
-try:
-    with open('$CLAUDE_USAGE_STATUS') as f:
-        d = json.load(f)
-    lr = d.get('last_run', '')
-    if lr:
-        dt = datetime.datetime.fromisoformat(lr.replace('Z', '+00:00'))
-        delta = datetime.datetime.now(datetime.timezone.utc) - dt
-        mins = int(delta.total_seconds() / 60)
-        if mins < 1: print('just now')
-        elif mins < 60: print(f'{mins}m ago')
-        else: print(f'{mins//60}h {mins%60}m ago')
-    else:
-        print('never')
-except:
-    print('unknown')
-" 2>/dev/null || echo "unknown")
-            tokens=$(python3 -c "
-import json
-try:
-    with open('$CLAUDE_USAGE_STATUS') as f:
-        d = json.load(f)
-    total = int(d.get('total_tokens', 0) or 0)
-    print(f'{total:,} tokens')
-except:
-    pass
-" 2>/dev/null || true)
-            summary=$(python3 -c "
-import json
-try:
-    with open('$CLAUDE_USAGE_STATUS') as f:
-        d = json.load(f)
-    text = d.get('codex_summary')
-    if isinstance(text, dict):
-        if text.get('ok') and text.get('text'):
-            print(text['text'].splitlines()[0][:120])
-        elif text.get('error'):
-            print(f'codex summary failed: {text[\"error\"][:80]}')
-except:
-    pass
-" 2>/dev/null || true)
-        fi
-        echo -e "  ${GREEN}●${NC} ${BOLD}Claude Usage${NC}: active (pid ${pid}, last run: ${last_run})"
-        if [[ -n "$tokens" ]]; then echo -e "    ${tokens}"; fi
-        if [[ -n "$summary" ]]; then echo -e "    ${summary}"; fi
-    else
-        echo -e "  ${RED}○${NC} ${BOLD}Claude Usage${NC}: inactive — press ${CYAN}[U]${NC} to start"
-    fi
+    {
+        echo "# worktree-deck — per-user state (generated)"
+        echo "WTD_DAEMONS_DISABLED=\"${WTD_DAEMONS_DISABLED:-}\""
+    } > "$CONSOLE_CONFIG_FILE"
 }
 
 # Main repo: explicit config, else the git toplevel of the invoking directory
@@ -178,6 +91,17 @@ MAIN_REPO="${WTD_MAIN_REPO:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/nul
 wtd_load_config "$MAIN_REPO"
 MAIN_REPO="${WTD_MAIN_REPO:-$MAIN_REPO}"
 WORKTREES_DIR="${WTD_WORKTREES_DIR:-${MAIN_REPO}-worktrees}"
+
+# Guard for the destructive container sweeps: without a configured prefix,
+# `docker ps --filter name=^` would match EVERY container on the host, so the
+# dead/orphan/stop-all sweeps refuse to run.
+_wtd_require_container_prefix() {
+    if [[ -z "${WTD_CONTAINER_PREFIX:-}" ]]; then
+        echo -e "${YELLOW}Container cleanup is disabled — set WTD_CONTAINER_PREFIX in your worktree-deck.conf.${NC}"
+        return 1
+    fi
+    return 0
+}
 
 # Global PR metadata cache: "branch<TAB>number<TAB>state<TAB>head_oid" per line.
 PR_DATA=""
@@ -240,12 +164,8 @@ header() {
 
     echo -e "  ${BOLD}Current:${NC} ${CYAN}${cur_name}${NC}  ${status_display}  slot ${cur_slot}  ${cur_ports}"
     print_daemon_indicator
-    if is_daemon_enabled "claude-usage"; then
-        claude_usage_status_line
-    fi
-    # Show other daemons (claude-usage already shown above with richer detail)
+    # Configured background daemons (WTD_DAEMONS), if any.
     for _d in $DAEMON_NAMES; do
-        [[ "$_d" == "claude-usage" ]] && continue
         is_daemon_enabled "$_d" || continue
         daemon_status_line "$_d"
     done
@@ -253,7 +173,7 @@ header() {
 }
 
 # Compute the per-worktree container-name suffix the same way worktree-env.sh
-# does (e.g. "-bou-942-foo" → containers named gaia-backend-bou-942-foo).
+# Per-worktree container suffix + service names come from lib/config.sh hooks.
 # Returns the empty string for the main repo on main/master.
 # Per-worktree container suffix + service names are config-driven (lib/config.sh).
 worktree_suffix() { wtd_branch_tag "$1"; }
@@ -276,7 +196,7 @@ refresh_docker_reachability_for_render() {
     local _prev_skip_fallback="${WTD_DOCKER_SKIP_FALLBACK:-}"
     export WTD_DOCKER_SKIP_WAKE=1
     export WTD_DOCKER_SKIP_FALLBACK=1
-    gaia_docker_reachable 2 >/dev/null 2>&1 || true
+    wtd_docker_reachable 2 >/dev/null 2>&1 || true
     WC_DOCKER_LAST_REPROBE_AT="$_now"
     if [[ -n "$_prev_skip_wake" ]]; then
         export WTD_DOCKER_SKIP_WAKE="$_prev_skip_wake"
@@ -654,23 +574,27 @@ list_worktrees() {
             dead_count=$((dead_count + 1))
             dead_names+="    ${RED}○${NC} ${cname}\n"
         done < <(DOCKER_HOST="$_sweep_host" docker ps -a \
-            --filter "name=^gaia-" \
+            --filter "name=^${WTD_CONTAINER_PREFIX}" \
             --filter "status=created" \
             --filter "status=exited" \
             --filter "status=dead" \
             --format "{{.Names}}" 2>/dev/null || true)
 
-        # Find orphan containers (running gaia-* not matching any worktree)
+        # Find orphan containers (running project containers not matching any worktree)
         while IFS= read -r cname; do
             [[ -z "$cname" ]] && continue
-            # Skip shared infra
-            [[ "$cname" == "gaia-postgres" || "$cname" == "gaia-rabbitmq" ]] && continue
+            # Skip configured shared infra
+            local _shared _skip=0
+            for _shared in ${WTD_SHARED_CONTAINERS:-}; do
+                [[ "$cname" == "$_shared" ]] && { _skip=1; break; }
+            done
+            [[ "$_skip" -eq 1 ]] && continue
             # Check if this container matches any known worktree
             if [[ " $all_suffixes " != *" $cname "* ]]; then
                 orphan_count=$((orphan_count + 1))
                 orphan_names+="    ${YELLOW}?${NC} ${cname}\n"
             fi
-        done < <(DOCKER_HOST="$_sweep_host" docker ps --filter "name=^gaia-" --format "{{.Names}}" 2>/dev/null || true)
+        done < <(DOCKER_HOST="$_sweep_host" docker ps --filter "name=^${WTD_CONTAINER_PREFIX}" --format "{{.Names}}" 2>/dev/null || true)
     else
         echo
         echo -e "  ${YELLOW}Skipping Docker container cleanup summary; Docker daemon unavailable.${NC}"
@@ -727,7 +651,7 @@ create_worktree() {
         echo -e "${RED}Error: Task name required${NC}"
         return 1
     fi
-    if ! bash "$MAIN_REPO/scripts/validate-worktree-name.sh" "$task_name"; then
+    if ! bash "$LIB_DIR/validate-worktree-name.sh" "$task_name"; then
         return 1
     fi
 
@@ -765,7 +689,6 @@ create_worktree() {
     echo -e "${BLUE}Refreshing from ${fetch_remote}/${fetch_ref}...${NC}"
     git -C "$MAIN_REPO" fetch "$fetch_remote" "$fetch_ref"
     git -C "$MAIN_REPO" worktree add -b "$branch_name" "$worktree_path" "$base_branch"
-    bash "$MAIN_REPO/scripts/setup-serena-worktree.sh" --quiet "$worktree_path" || true
 
     # Push branch to remote and set correct upstream tracking.
     # Without this, the branch tracks origin/main and pushes go to main.
@@ -1253,14 +1176,35 @@ remove_stale_worktrees() {
     fi
 }
 
-# Show logs for a worktree (delegates to standalone script)
+# Tail the dev-stack container logs for a worktree.
 show_logs() {
     local path="$1"
-    bash "${MAIN_REPO}/scripts/worktree-logs.sh" "$path"
+    local names
+    names="$(wtd_service_names "$path")"
+    if [[ -z "$names" ]]; then
+        echo -e "${YELLOW}No dev-stack containers configured (set WTD_SERVICE_TEMPLATES).${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    # Build a docker logs follow across whichever of the worktree's containers exist.
+    local running=()
+    local n
+    while IFS= read -r n; do
+        [[ -z "$n" ]] && continue
+        docker ps --filter "name=^${n}$" --format '{{.Names}}' 2>/dev/null | grep -qFx "$n" && running+=("$n")
+    done <<< "$names"
+    if [[ ${#running[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}No running containers for this worktree.${NC}"
+        read -p "Press Enter to continue..."
+        return
+    fi
+    echo -e "${CYAN}Tailing logs (Ctrl-C to stop): ${running[*]}${NC}"
+    docker logs -f --tail 100 "${running[0]}" 2>&1 || true
 }
 
-# Remove dead (exited/created/dead) gaia-* containers
+# Remove dead (exited/created/dead) project containers
 remove_dead_containers() {
+    _wtd_require_container_prefix || return 0
     # Target the same daemon the status summary counted dead containers on.
     # CONTAINER_SWEEP_HOST is set by the render path (empty = local daemon);
     # fall back to the ambient DOCKER_HOST if cleanup is ever invoked without
@@ -1270,18 +1214,18 @@ remove_dead_containers() {
     local _host="${CONTAINER_SWEEP_HOST-${DOCKER_HOST:-}}"
     local stale
     stale=$(DOCKER_HOST="$_host" docker ps -a \
-        --filter "name=^gaia-" \
+        --filter "name=^${WTD_CONTAINER_PREFIX}" \
         --filter "status=created" \
         --filter "status=exited" \
         --filter "status=dead" \
         --format "{{.Names}}\t{{.Status}}" 2>/dev/null || true)
 
     if [[ -z "$stale" ]]; then
-        echo -e "${YELLOW}No dead gaia-* containers found.${NC}"
+        echo -e "${YELLOW}No dead project containers found.${NC}"
         return 0
     fi
 
-    echo -e "${BOLD}Dead gaia-* containers:${NC}"
+    echo -e "${BOLD}Dead project containers:${NC}"
     while IFS=$'\t' read -r container status; do
         [[ -z "$container" ]] && continue
         echo -e "  ${RED}○${NC} ${container}  (${status})"
@@ -1299,16 +1243,17 @@ remove_dead_containers() {
     echo -e "${GREEN}Removed ${removed} dead container(s).${NC}"
 }
 
-# Remove orphan gaia-* containers — delegates to cleanup-merged-worktrees.sh
+# Remove orphan project containers — delegates to cleanup-merged-worktrees.sh
 # which treats each live worktree's .env as source of truth for container
-# names. Anything else under name=^gaia- gets docker rm -f'd.
+# names. Anything else under name=^${WTD_CONTAINER_PREFIX} gets docker rm -f'd.
 remove_orphan_containers() {
+    _wtd_require_container_prefix || return 0
     # Target the same daemon the status summary counted orphans on, the same way
     # [Y]/[X] do. CONTAINER_SWEEP_HOST is set by the render path (empty = local
     # daemon); fall back to the ambient DOCKER_HOST if [O] is invoked without a
     # prior render.
     local _host="${CONTAINER_SWEEP_HOST-${DOCKER_HOST:-}}"
-    echo -e "${BOLD}Sweeping orphan gaia-* containers...${NC}"
+    echo -e "${BOLD}Sweeping orphan project containers...${NC}"
     echo
     # Clear the inherited reachability cache so the child re-probes the resolved
     # host. The console exports WTD_DOCKER_REACHABLE_CACHED=no when the
@@ -1318,18 +1263,12 @@ remove_orphan_containers() {
     # just listed under [O] untouched. Passing the resolved DOCKER_HOST too lets
     # the child probe local directly instead of wasting the ssh connect timeout
     # on the dead remote before falling back.
-    DOCKER_HOST="$_host" WTD_DOCKER_REACHABLE_CACHED= \
-        bash "${MAIN_REPO}/scripts/cleanup-merged-worktrees.sh" || true
+    # Optional deeper sweep hook (e.g. a project-specific merged-worktree reaper).
+    if [[ -n "${WTD_ORPHAN_SWEEP_CMD:-}" ]]; then
+        DOCKER_HOST="$_host" WTD_DOCKER_REACHABLE_CACHED= eval "$WTD_ORPHAN_SWEEP_CMD" || true
+    fi
     echo
     echo -e "${GREEN}Orphan sweep complete.${NC}"
-}
-
-cleanup_serena_processes() {
-    echo -e "${BOLD}Cleaning stale Serena/TypeScript processes...${NC}"
-    echo
-    bash "${MAIN_REPO}/scripts/cleanup-orphan-serena.sh" --kill || true
-    echo
-    echo -e "${GREEN}Serena cleanup complete.${NC}"
 }
 
 # Run e2e tests for a worktree
@@ -1405,7 +1344,11 @@ open_terminal_tab() {
     local terminal_app
     terminal_app="$(resolve_terminal_app)"
     local iterm_mode="${WTD_ITERM_OPEN_MODE:-split}"
-    local shell_cmd="cd $(printf '%q' "$path") && WTD_PROJECT_DIR=$(printf '%q' "$path") bash $(printf '%q' "$MAIN_REPO/scripts/worktree-banner.sh")"
+    local shell_cmd="cd $(printf '%q' "$path") && export WTD_PROJECT_DIR=$(printf '%q' "$path")"
+    # Optional per-worktree banner command (set WTD_BANNER_CMD in your config).
+    if [[ -n "${WTD_BANNER_CMD:-}" ]]; then
+        shell_cmd="${shell_cmd} && ${WTD_BANNER_CMD}"
+    fi
 
     if [[ -n "$cli_command" ]]; then
         shell_cmd="${shell_cmd} && ${cli_command}"
@@ -1478,10 +1421,10 @@ launch_cli_inline() {
     local cli_command="$2"
     local label="$3"
     local launch_flag
-    launch_flag="$(gaia_normalize_launch_flag "$cli_command")"
+    launch_flag="$(wtd_normalize_launch_flag "$cli_command")"
 
     echo -e "${BLUE}Launching ${label}...${NC}"
-    bash "$MAIN_REPO/scripts/launch-worktree-cli.sh" "$path" "$launch_flag"
+    bash "$LIB_DIR/launch-worktree-cli.sh" "$path" "$launch_flag"
 }
 
 # Open frontend in browser. Always uses http://localhost:<port> — Auth0 refuses
@@ -1504,20 +1447,14 @@ open_frontend() {
     # If this worktree was started against a remote Docker daemon, ensure the
     # SSH port-forward is alive before opening — otherwise localhost:<port>
     # has nothing listening and the browser will just see a connection refused.
-    local remote_host=""
-    if [[ -f "$path/.env.local" ]]; then
-        remote_host=$(grep "^REMOTE_DAEMON_HOST=" "$path/.env.local" 2>/dev/null | cut -d= -f2)
-    fi
-    if [[ -n "$remote_host" ]]; then
-        local socket
-        socket=$(grep "^REMOTE_TUNNEL_SOCKET=" "$path/.env.local" 2>/dev/null | cut -d= -f2)
-        if [[ -z "$socket" ]] || ! ssh -S "$socket" -O check "$remote_host" >/dev/null 2>&1; then
-            echo -e "${YELLOW}Remote daemon detected; SSH tunnel not active — starting…${NC}"
-            (cd "$path" && bash scripts/remote-tunnel-start.sh) || {
-                echo -e "${RED}Failed to start remote tunnel — cannot open frontend.${NC}"
-                return 1
-            }
-        fi
+    # Optional remote-daemon tunnel hook: when the frontend runs on a remote
+    # Docker host, set WTD_REMOTE_TUNNEL_CMD to a command that ensures the SSH
+    # port-forward is up (run with the worktree as cwd) before the browser opens.
+    if [[ -n "${WTD_REMOTE_TUNNEL_CMD:-}" ]]; then
+        (cd "$path" && eval "$WTD_REMOTE_TUNNEL_CMD") || {
+            echo -e "${RED}Remote tunnel command failed — cannot open frontend.${NC}"
+            return 1
+        }
     fi
 
     local url="http://localhost:${frontend_port}"
@@ -1554,6 +1491,7 @@ open_vscode() {
 
 # Stop containers for all worktrees
 stop_all_worktrees() {
+    _wtd_require_container_prefix || return 0
     local running=()
     for path in "${WORKTREE_PATHS[@]}"; do
         local status=$(get_container_status "$path")
@@ -1582,12 +1520,12 @@ stop_all_worktrees() {
     # instead of wedging on the unreachable remote's ssh connect timeout.
     local _host="${CONTAINER_SWEEP_HOST-${DOCKER_HOST:-}}"
 
-    # Catch orphan/shared Gaia containers not tied to currently listed worktrees
+    # Catch orphan/shared project containers not tied to currently listed worktrees
     local remaining
-    remaining=$(DOCKER_HOST="$_host" docker ps --filter "name=^gaia-" --format "{{.Names}}" 2>/dev/null || true)
+    remaining=$(DOCKER_HOST="$_host" docker ps --filter "name=^${WTD_CONTAINER_PREFIX}" --format "{{.Names}}" 2>/dev/null || true)
     if [[ -n "$remaining" ]]; then
         echo
-        echo -e "${BOLD}Stopping remaining gaia-* containers (orphan/shared):${NC}"
+        echo -e "${BOLD}Stopping remaining project containers (orphan/shared):${NC}"
         while IFS= read -r container; do
             [[ -z "$container" ]] && continue
             echo -e "  ${YELLOW}Stopping ${container}...${NC}"
@@ -1596,17 +1534,17 @@ stop_all_worktrees() {
         done <<< "$remaining"
     fi
 
-    # Remove stale created/exited/dead Gaia containers so they don't linger in listings
+    # Remove stale created/exited/dead project containers so they don't linger in listings
     local stale
     stale=$(DOCKER_HOST="$_host" docker ps -a \
-        --filter "name=^gaia-" \
+        --filter "name=^${WTD_CONTAINER_PREFIX}" \
         --filter "status=created" \
         --filter "status=exited" \
         --filter "status=dead" \
         --format "{{.Names}}" 2>/dev/null || true)
     if [[ -n "$stale" ]]; then
         echo
-        echo -e "${BOLD}Removing stale gaia-* containers:${NC}"
+        echo -e "${BOLD}Removing stale project containers:${NC}"
         while IFS= read -r container; do
             [[ -z "$container" ]] && continue
             DOCKER_HOST="$_host" docker rm "$container" >/dev/null 2>&1 || true
@@ -1615,7 +1553,7 @@ stop_all_worktrees() {
     fi
 
     echo
-    echo -e "${GREEN}✓ All gaia containers stopped and cleaned.${NC}"
+    echo -e "${GREEN}✓ All project containers stopped and cleaned.${NC}"
 }
 
 # Main menu
@@ -1627,13 +1565,11 @@ main_menu() {
         echo -e "${BOLD}Actions:${NC}"
         echo -e "  ${CYAN}[#]${NC}        Select worktree by number"
         echo -e "  ${CYAN}[n]${NC}ew      Create new worktree"
-        echo -e "  ${YELLOW}[X]${NC}        Stop + clean ALL gaia containers"
+        echo -e "  ${YELLOW}[X]${NC}        Stop + clean ALL dev-stack containers"
         echo -e "  ${YELLOW}[Y]${NC}        Remove dead (exited) containers"
         echo -e "  ${YELLOW}[O]${NC}        Remove orphan containers (no matching worktree)"
-        echo -e "  ${YELLOW}[Z]${NC}        Clean stale Serena/TypeScript processes"
         echo -e "  ${RED}[M]${NC}        Delete stale worktrees (merged/closed/orphan)"
         echo -e "  ${CYAN}[r]${NC}efresh  Refresh list"
-        echo -e "  ${CYAN}[U]${NC}sage    Toggle Claude usage analyzer"
         echo -e "  ${CYAN}[D]${NC}aemons  Start/stop all daemons"
         echo -e "  ${CYAN}[C]${NC}onfig   Edit per-user console settings (toggle daemons)"
         echo -e "  ${CYAN}[q]${NC}uit     Exit"
@@ -1662,10 +1598,6 @@ main_menu() {
                 remove_orphan_containers
                 read -p "Press Enter to continue..."
                 ;;
-            Z|z)
-                cleanup_serena_processes
-                read -p "Press Enter to continue..."
-                ;;
             M|m)
                 remove_stale_worktrees
                 read -p "Press Enter to continue..."
@@ -1675,19 +1607,6 @@ main_menu() {
                 ;;
             C)
                 console_config_menu || true
-                ;;
-            U|u)
-                if daemon_is_running "claude-usage"; then
-                    daemon_stop "claude-usage"
-                    echo -e "  ${RED}○${NC} Claude usage analyzer stopped"
-                else
-                    if daemon_start "claude-usage"; then
-                        echo -e "  ${GREEN}●${NC} Claude usage analyzer started (pid $(daemon_pid claude-usage))"
-                    else
-                        echo -e "  ${RED}✗${NC} Claude usage analyzer failed to start"
-                    fi
-                fi
-                read -p "Press Enter to continue..."
                 ;;
             D|d)
                 echo -e "\n${BOLD}Daemon status:${NC}"
@@ -1739,8 +1658,8 @@ worktree_menu() {
     local name=$(short_name "$path")
     local preferred_cli
     local preferred_label
-    preferred_cli="$(gaia_launch_cli_from_flag "$DEFAULT_LAUNCH_FLAG")"
-    preferred_label="$(gaia_launch_label_from_flag "$DEFAULT_LAUNCH_FLAG")"
+    preferred_cli="$(wtd_launch_cli_from_flag "$DEFAULT_LAUNCH_FLAG")"
+    preferred_label="$(wtd_launch_label_from_flag "$DEFAULT_LAUNCH_FLAG")"
     refresh_pr_data
 
     while true; do
@@ -1875,7 +1794,7 @@ find_worktree_by_name() {
 # ${CONSOLE_CONFIG_FILE}; restart the console (or use [D]) to apply to
 # already-running daemons.
 console_config_menu() {
-    local entries=("pr-dashboard" "claude-usage" "trace-viewer")
+    local entries=("${WTD_DAEMONS[@]}")
     local labels=("PR dashboard daemon" "Claude usage analyzer" "Trace viewer daemon")
     local dirty=0
 
@@ -1976,7 +1895,7 @@ _wc_prev_docker_skip_fallback="${WTD_DOCKER_SKIP_FALLBACK:-}"
 export WTD_DOCKER_SKIP_WAKE=1
 export WTD_DOCKER_SKIP_FALLBACK=1
 unset WTD_DOCKER_REACHABLE_CACHED
-gaia_docker_reachable 2 >/dev/null 2>&1 || true
+wtd_docker_reachable 2 >/dev/null 2>&1 || true
 WC_DOCKER_LAST_REPROBE_AT="$(date +%s)"
 if [[ -n "$_wc_prev_docker_skip_wake" ]]; then
     export WTD_DOCKER_SKIP_WAKE="$_wc_prev_docker_skip_wake"
@@ -2005,7 +1924,7 @@ if [[ -n "$JUMP_TO" ]]; then
     matched_path=$(find_worktree_by_name "$JUMP_TO") || {
         echo -e "${RED}No worktree found matching '${JUMP_TO}'${NC}"
         echo "Available worktrees:"
-        git -C "$MAIN_REPO" worktree list 2>/dev/null | grep -E "gaia-free|gaia-free-worktrees" | while IFS= read -r line; do
+        git -C "$MAIN_REPO" worktree list 2>/dev/null | while IFS= read -r line; do
             p=$(echo "$line" | awk '{print $1}')
             echo "  $(short_name "$p")"
         done

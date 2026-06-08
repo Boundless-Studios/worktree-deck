@@ -18,9 +18,16 @@
 
 set -euo pipefail
 
-DAEMON_DIR="${GAIA_DAEMON_DIR:-$HOME/.claude/daemons}"
 _DAEMON_SH_PATH="${BASH_SOURCE[0]:-$0}"
-PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$_DAEMON_SH_PATH")/.." && pwd)}"
+# Pull in the daemon registry (WTD_DAEMONS + WTD_DAEMON_* maps) if not already
+# sourced, so this works both standalone and when sourced by worktree-deck.
+if [[ -z "${WTD_DAEMONS+x}" ]]; then
+    # shellcheck source=config.sh
+    source "$(cd "$(dirname "$_DAEMON_SH_PATH")" && pwd)/config.sh"
+fi
+
+DAEMON_DIR="${WTD_DAEMON_DIR:-$HOME/.cache/worktree-deck/daemons}"
+PROJECT_ROOT="${WTD_MAIN_REPO:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 # Colors (only when stdout is a terminal or when sourced by an interactive script)
 if [[ -t 1 ]] || [[ "${DAEMON_COLOR:-}" == "1" ]]; then
@@ -30,44 +37,24 @@ else
 fi
 
 # ── Registry ────────────────────────────────────────────────────────────────
-# All active daemon names. The PR dashboard is a pure orchestrator/queuer
-# (BOU-1341): it surfaces PR blockers and queues a maintenance bead +
-# PIPELINE_HANDOFF, but NEVER spawns its own agent. The single local worktree
-# agent services the queue (Claude: `/loop /pr-maintenance-check`; codex:
-# `scripts/pr-maintenance-loop.sh --runtime codex`), so there is exactly one
-# executor per PR and no races with a live local session.
-DAEMON_NAMES="claude-usage pr-dashboard trace-viewer"
-# Daemons that are safe to autostart from interactive Claude session hooks.
-DAEMON_AUTOSTART_NAMES="pr-dashboard trace-viewer"
+# The registry is user-defined in worktree-deck.conf via WTD_DAEMONS + the
+# WTD_DAEMON_CMD/URL/TYPE/PATTERN maps (see lib/config.sh). Default: none.
+DAEMON_NAMES="${WTD_DAEMONS[*]:-}"
+DAEMON_AUTOSTART_NAMES="${WTD_DAEMONS_AUTOSTART[*]:-}"
 
 daemon_get_command() {
-    case "$1" in
-        claude-usage)
-            echo "cd '$PROJECT_ROOT' && exec python3 scripts/claude_usage_analyzer.py --minutes 40 --write-status --codex-summary" ;;
-        pr-dashboard)
-            echo "cd '$PROJECT_ROOT' && { test -d pr_dashboard/.venv || make -C '$PROJECT_ROOT' pr-dashboard-setup; } && exec pr_dashboard/.venv/bin/python -m pr_dashboard" ;;
-        trace-viewer)
-            echo "cd '$PROJECT_ROOT' && exec python3 scripts/trace-app.py --browser" ;;
-        *) return 1 ;;
-    esac
+    local c="${WTD_DAEMON_CMD[$1]:-}"
+    [[ -n "$c" ]] || return 1
+    echo "$c"
 }
 
 daemon_get_url() {
-    case "$1" in
-        trace-viewer) echo "http://localhost:8643/trace-viewer.html" ;;
-        pr-dashboard) echo "http://localhost:9000" ;;
-        *) echo "" ;;
-    esac
+    echo "${WTD_DAEMON_URL[$1]:-}"
 }
 
 # "loop:<seconds>" = run, sleep, repeat.  "persistent" = run once, stays alive.
 daemon_get_type() {
-    case "$1" in
-        claude-usage) echo "loop:900" ;;
-        pr-dashboard) echo "persistent" ;;
-        trace-viewer) echo "persistent" ;;
-        *) return 1 ;;
-    esac
+    echo "${WTD_DAEMON_TYPE[$1]:-persistent}"
 }
 
 # ── Core functions ──────────────────────────────────────────────────────────
@@ -111,12 +98,9 @@ _file_mtime() {
 }
 # Grep pattern that matches any running instance of a daemon (tracked or orphaned).
 _daemon_grep_pattern() {
-    case "$1" in
-        claude-usage) echo "claude_usage_analyzer\\.py" ;;
-        pr-dashboard) echo "pr_dashboard" ;;
-        trace-viewer) echo "trace-app\\.py" ;;
-        *) return 1 ;;
-    esac
+    local p="${WTD_DAEMON_PATTERN[$1]:-}"
+    [[ -n "$p" ]] || return 1
+    echo "$p"
 }
 
 # Kill ALL processes matching a daemon's command pattern, regardless of PID tracking.
@@ -341,17 +325,6 @@ daemon_stop_all() {
     for name in $DAEMON_NAMES; do
         daemon_stop "$name"
     done
-    # Best-effort sweep of the deprecated babysit-prs loop: an upgraded
-    # checkout may inherit a still-running legacy daemon. Kill any process
-    # from the legacy pidfile, then clean up its state files.
-    local legacy_pidfile="$HOME/.claude/babysit-prs.pid"
-    if [[ -f "$legacy_pidfile" ]]; then
-        local legacy_pid
-        legacy_pid=$(cat "$legacy_pidfile" 2>/dev/null || true)
-        [[ -n "$legacy_pid" ]] && _kill_tree "$legacy_pid" 2>/dev/null || true
-    fi
-    rm -f "$legacy_pidfile" "$HOME/.claude/babysit-prs-status.json" \
-        "$DAEMON_DIR/babysit-prs.pid" "$DAEMON_DIR/babysit-prs.log" 2>/dev/null || true
     echo "All daemons stopped"
 }
 
