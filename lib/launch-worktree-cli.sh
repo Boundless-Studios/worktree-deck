@@ -24,11 +24,13 @@ CLI_COMMAND="$(wtd_launch_cli_from_flag "$LAUNCH_FLAG")"
 SESSION_ID="${WTD_SESSION_ID:-wtd-$$-$(git -C "$WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo nohead)}"
 
 # Optional event bridge: WTD_EVENT_SINK is a command that receives
-# "<event> <session_id> <cli> <worktree_path> [exit_code]" as arguments.
+#   "<event> <session_id> <cli> <worktree_path> <launcher_pid> [exit_code]"
+# <launcher_pid> is THIS launcher process ($$) — it stays alive for the whole
+# agent session, so a sink that tracks liveness can treat it as the owning pid.
 _emit_event() {
     [[ -n "${WTD_EVENT_SINK:-}" ]] || return 0
     # shellcheck disable=SC2086
-    ${WTD_EVENT_SINK} "$1" "$SESSION_ID" "$CLI_COMMAND" "$WORKTREE_PATH" "${2:-}" >/dev/null 2>&1 || true
+    ${WTD_EVENT_SINK} "$1" "$SESSION_ID" "$CLI_COMMAND" "$WORKTREE_PATH" "$$" "${2:-}" >/dev/null 2>&1 || true
 }
 
 # Set the terminal title (best-effort; harmless if unsupported).
