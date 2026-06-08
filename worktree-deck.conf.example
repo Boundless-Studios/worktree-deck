@@ -24,6 +24,11 @@
 # WTD_FRONTEND_PORT_KEY="FRONTEND_PORT"
 # WTD_SLOT_ENV_KEY="WTD_SLOT"
 
+# Optional: .env keys recording each worktree's ACTUAL container names. Matched
+# in addition to the branch-derived names, so renamed-branch / custom-named
+# containers still match their worktree instead of looking orphaned.
+# WTD_ENV_CONTAINER_KEYS="BACKEND_CONTAINER_NAME FRONTEND_CONTAINER_NAME"
+
 # --- Agents the console can launch in a worktree (first = default) ----------
 WTD_AGENT_LAUNCHERS=(claude codex)
 

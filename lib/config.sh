@@ -49,6 +49,14 @@ fi
 : "${WTD_FRONTEND_PORT_KEY:=FRONTEND_PORT}"
 : "${WTD_SLOT_ENV_KEY:=WTD_SLOT}"
 
+# Optional: space-separated .env keys that record a worktree's ACTUAL container
+# names (e.g. written by your start command). These are matched in addition to
+# the branch-derived WTD_SERVICE_TEMPLATES names, so a worktree whose containers
+# aren't derivable from its current branch (renamed branch, custom names) still
+# matches its containers instead of showing them as orphans. Empty => derive
+# names only from WTD_SERVICE_TEMPLATES.
+: "${WTD_ENV_CONTAINER_KEYS:=}"
+
 # Agent CLIs the console can launch in a worktree (first = default).
 if [[ -z "${WTD_AGENT_LAUNCHERS+x}" ]]; then
     WTD_AGENT_LAUNCHERS=(claude codex)
@@ -139,8 +147,9 @@ wtd_branch_tag() {
     printf '%s' "${tag:+-$tag}"
 }
 
-# Emit the dev-stack container names for a worktree (one per line). Empty when
-# no service templates are configured (stackless mode).
+# Emit a worktree's dev-stack container names (one per line): the branch-derived
+# WTD_SERVICE_TEMPLATES names, plus any actual names recorded in the worktree's
+# .env under WTD_ENV_CONTAINER_KEYS. Empty when neither is configured (stackless).
 wtd_service_names() {
     local worktree_path="$1"
     local suffix; suffix="$(wtd_branch_tag "$worktree_path")"
@@ -148,6 +157,17 @@ wtd_service_names() {
     for tmpl in "${WTD_SERVICE_TEMPLATES[@]}"; do
         printf '%s\n' "${tmpl//\{suffix\}/$suffix}"
     done
+    # Actual container names recorded in the worktree's .env (covers renamed
+    # branches / non-derivable names). These match the running containers even
+    # when the current branch no longer derives them.
+    if [[ -n "${WTD_ENV_CONTAINER_KEYS:-}" && -f "$worktree_path/.env" ]]; then
+        local key val
+        for key in $WTD_ENV_CONTAINER_KEYS; do
+            val="$(grep "^${key}=" "$worktree_path/.env" 2>/dev/null | head -n1 | cut -d= -f2-)"
+            val="${val%\"}"; val="${val#\"}"; val="${val%\'}"; val="${val#\'}"
+            [[ -n "$val" ]] && printf '%s\n' "$val"
+        done
+    fi
 }
 
 # Run a configured stack command ($1=template, $2=worktree path). No-op if empty.
