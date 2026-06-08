@@ -12,6 +12,13 @@ source "${LIB_DIR}/config.sh"
 source "${LIB_DIR}/worktree-launch-mode.sh"
 
 WORKTREE_PATH="${1:?Usage: launch-worktree-cli.sh <worktree_path> [launch_flag]}"
+
+# This launcher runs as its own process (spawned by the TUI), so it must load
+# the project config itself — env vars and hook-function overrides from
+# worktree-deck.conf are NOT inherited across the subprocess boundary. Without
+# this, WTD_EVENT_SINK and any wtd_launch_* override would silently not apply.
+wtd_load_config "$WORKTREE_PATH"
+
 LAUNCH_FLAG="${2:-$(wtd_default_launch_flag)}"
 if wtd_is_launch_selector "$LAUNCH_FLAG"; then
     LAUNCH_FLAG="$(wtd_normalize_launch_flag "$LAUNCH_FLAG")"
