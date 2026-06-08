@@ -92,6 +92,15 @@ wtd_load_config "$MAIN_REPO"
 MAIN_REPO="${WTD_MAIN_REPO:-$MAIN_REPO}"
 WORKTREES_DIR="${WTD_WORKTREES_DIR:-${MAIN_REPO}-worktrees}"
 
+# Hand the configured remote daemon off to DOCKER_HOST so every docker operation
+# (status, start/stop, sweeps, reachability probe) actually targets it. A
+# DOCKER_HOST already present in the environment wins — the user's explicit
+# override is never clobbered. When the remote is unreachable, the reachability
+# probe below falls back to the local daemon as designed.
+if [[ -n "$WTD_REMOTE_DOCKER_HOST" && -z "${DOCKER_HOST:-}" ]]; then
+    export DOCKER_HOST="$WTD_REMOTE_DOCKER_HOST"
+fi
+
 # Guard for the destructive container sweeps: without a configured prefix,
 # `docker ps --filter name=^` would match EVERY container on the host, so the
 # dead/orphan/stop-all sweeps refuse to run.
