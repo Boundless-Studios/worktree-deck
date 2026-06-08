@@ -192,6 +192,11 @@ WTD_E2E_CMD="make e2e-test"                  # optional
 WTD_BACKEND_PORT_KEY="BACKEND_PORT"
 WTD_FRONTEND_PORT_KEY="FRONTEND_PORT"
 WTD_SLOT_ENV_KEY="APP_SLOT"
+# .env keys recording each worktree's ACTUAL container names — matched in
+# addition to the branch-derived names, so a worktree whose containers aren't
+# derivable from its current branch (renamed branch, custom names) still matches
+# instead of looking orphaned.
+WTD_ENV_CONTAINER_KEYS="BACKEND_CONTAINER_NAME FRONTEND_CONTAINER_NAME"
 
 # --- agents you can launch in a worktree (first = default) ---
 WTD_AGENT_LAUNCHERS=(claude codex)
@@ -212,6 +217,24 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 
 Every value is optional and has a project-agnostic default; any `WTD_*` can also
 come from the environment. See `worktree-deck.conf.example` for the full list.
+
+### Where config is loaded from
+
+worktree-deck sources, in order (later wins):
+
+1. a repo-local `worktree-deck.conf` (walking up from the cwd's repo), then
+2. a global `~/.config/worktree-deck/config`.
+
+Because `worktree-deck` figures out which repo to manage from your **current
+directory's** git root, two tips for a smooth setup:
+
+- **Run `wc` from outside the repo** (e.g. your home dir)? Pin the repo so it
+  doesn't depend on cwd — put `WTD_MAIN_REPO="$HOME/code/myapp"` in the **global**
+  config. (worktree-deck errors clearly rather than silently listing nothing if
+  it can't find a repo.)
+- A repo-local `worktree-deck.conf` only loads when you run from a checkout that
+  has it (it's a tracked file, so branch-dependent). For config that should apply
+  no matter which worktree/branch you're on, prefer the **global** location.
 
 ## Pairs with agentic-pr-dash
 

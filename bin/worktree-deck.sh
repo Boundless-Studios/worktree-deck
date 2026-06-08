@@ -92,6 +92,15 @@ wtd_load_config "$MAIN_REPO"
 MAIN_REPO="${WTD_MAIN_REPO:-$MAIN_REPO}"
 WORKTREES_DIR="${WTD_WORKTREES_DIR:-${MAIN_REPO}-worktrees}"
 
+# Fail loudly instead of silently showing an empty worktree list. MAIN_REPO is
+# derived from the cwd's git toplevel, so running `wc` from outside a repo (e.g.
+# your home dir) would otherwise leave it pointed at a non-repo and list nothing.
+if ! git -C "$MAIN_REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    echo -e "${RED}worktree-deck: '${MAIN_REPO}' is not a git repository.${NC}" >&2
+    echo -e "${YELLOW}Run from inside your repo, or set WTD_MAIN_REPO in your config to pin it.${NC}" >&2
+    exit 1
+fi
+
 # Hand the configured remote daemon off to DOCKER_HOST so every docker operation
 # (status, start/stop, sweeps, reachability probe) actually targets it. A
 # DOCKER_HOST already present in the environment wins — the user's explicit
