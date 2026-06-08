@@ -1,0 +1,37 @@
+# worktree-deck configuration. Copy to `worktree-deck.conf` at your repo root,
+# or to ~/.config/worktree-deck/config for a global default.
+#
+# This file is sourced as shell, so you can set variables AND override any wtd_*
+# hook function. Every value is optional; omit the [stack] bits entirely for
+# pure worktree management with no Docker.
+
+# --- Layout (auto-derived from git when omitted) ---------------------------
+# WTD_MAIN_REPO="$HOME/code/myapp"
+# WTD_WORKTREES_DIR="$HOME/code/myapp-worktrees"
+
+# --- Dev stack (OPTIONAL) --------------------------------------------------
+# Container-name templates; {suffix} becomes the per-worktree suffix.
+# WTD_SERVICE_TEMPLATES=("myapp-backend{suffix}" "myapp-frontend{suffix}")
+#
+# Commands to bring a worktree's stack up / down. {path} = worktree path
+# (omit {path} and the command runs with the worktree as cwd).
+# WTD_STACK_START="make start-worktree"
+# WTD_STACK_STOP="make stop-worktree"
+# WTD_E2E_CMD="make e2e-test"
+
+# --- .env keys the console reads for display -------------------------------
+# WTD_BACKEND_PORT_KEY="BACKEND_PORT"
+# WTD_FRONTEND_PORT_KEY="FRONTEND_PORT"
+# WTD_SLOT_ENV_KEY="WTD_SLOT"
+
+# --- Agents the console can launch in a worktree (first = default) ----------
+WTD_AGENT_LAUNCHERS=(claude codex)
+
+# --- Optional remote Docker daemon -----------------------------------------
+# WTD_REMOTE_DOCKER_HOST="ssh://user@build-host"
+
+# --- Optional: bridge session events to another tool -----------------------
+# WTD_EVENT_SINK="agentic-pr-dash record"
+
+# --- Optional: background daemons the console can toggle --------------------
+# WTD_DAEMONS=(agentic-pr-dash)
