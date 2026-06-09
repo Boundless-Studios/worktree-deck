@@ -29,13 +29,19 @@ jobs:
             echo "::notice::RUNNERS_PROBE_PAT not set; using ubuntu-latest. Add the secret to route CI to the desktop fleet."
             echo 'runs-on=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"; exit 0
           fi
-          ONLINE=$(gh api "repos/${{ github.repository }}/actions/runners" \
-            --jq '[.runners[] | select(.status=="online") | select([.labels[].name] | index("gaia-ci-desktop"))] | length' 2>/dev/null || echo 0)
+          # Count online runners authorized for THIS repo (--paginate so a match
+          # on a later page isn't missed). Require BOTH gaia-ci-desktop AND Linux
+          # so POSIX-only steps never land on a Windows runner sharing the label.
+          ONLINE=$(gh api --paginate "repos/${{ github.repository }}/actions/runners" \
+            --jq '.runners[]
+                  | select(.status=="online")
+                  | select(([.labels[].name] | index("gaia-ci-desktop")) and ([.labels[].name] | index("Linux")))
+                  | .id' 2>/dev/null | awk 'END{print NR+0}')
           if [ "${ONLINE:-0}" -gt 0 ]; then
-            echo "Desktop fleet: ${ONLINE} online runner(s) — routing CI there."
-            echo 'runs-on=["gaia-ci-desktop"]' >> "$GITHUB_OUTPUT"
+            echo "Desktop fleet: ${ONLINE} online Linux runner(s) — routing CI there."
+            echo 'runs-on=["gaia-ci-desktop","Linux"]' >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::No online gaia-ci-desktop runners authorized for this repo; using ubuntu-latest."
+            echo "::warning::No online gaia-ci-desktop Linux runners authorized for this repo; using ubuntu-latest."
             echo 'runs-on=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
