@@ -42,7 +42,9 @@ wtd_continue_worktree() {
     # up in the worktree list (by path basename or branch) before rejecting it.
     if [[ ! -d "$worktree_path" ]]; then
         local _resolved
-        _resolved="$(_wtd_resolve_worktree_path "$worktree_path")"
+        # `|| _resolved=""` keeps a no-match (resolver returns 1) from tripping a
+        # caller's `set -e` before we can print the helpful rejection below.
+        _resolved="$(_wtd_resolve_worktree_path "$worktree_path")" || _resolved=""
         if [[ -n "$_resolved" && -d "$_resolved" ]]; then
             worktree_path="$_resolved"
         else
