@@ -103,7 +103,12 @@ wtd_stack_start_lock_run() {
     local pidfile="$lock_dir/pid" startfile="$lock_dir/start"
     local reclaim_dir="${lock_dir}.reclaim" reclaim_pid="${lock_dir}.reclaim/pid" reclaim_start="${lock_dir}.reclaim/start"
     local wait_timeout="$WTD_STACK_START_LOCK_TIMEOUT" grace="$WTD_STACK_START_LOCK_MISSING_PID_GRACE"
-    local waited=0 announced=0 child_pid="" status
+    local waited=0 announced=0 child_pid="" status child_is_group=0
+    # Run the start command in its OWN process group (via setsid) when available,
+    # so we can signal the whole start tree — the start command's descendants
+    # (make, docker compose, …) commonly outlive the immediate wrapper. setsid is
+    # absent on stock macOS; there we fall back to single-pid signalling.
+    local _wtd_setsid; _wtd_setsid="$(command -v setsid 2>/dev/null || true)"
 
     # The PID that OWNS the lock for the lifetime of this run. This function is
     # always invoked inside a ( … ) subshell (see wtd_stack_start), and that
@@ -129,7 +134,14 @@ wtd_stack_start_lock_run() {
         local sig="$1" code="$2"
         trap - EXIT INT TERM HUP
         if [[ -n "${child_pid:-}" ]] && kill -0 "$child_pid" 2>/dev/null; then
-            kill "-$sig" "$child_pid" 2>/dev/null || true
+            # Signal the whole process group when the child leads one (setsid), so
+            # make/docker-compose descendants die too instead of outliving the
+            # released lock; otherwise signal just the child.
+            if [[ "${child_is_group:-0}" -eq 1 ]]; then
+                kill "-$sig" "-$child_pid" 2>/dev/null || kill "-$sig" "$child_pid" 2>/dev/null || true
+            else
+                kill "-$sig" "$child_pid" 2>/dev/null || true
+            fi
             wait "$child_pid" 2>/dev/null || true
         fi
         _release
@@ -196,8 +208,17 @@ wtd_stack_start_lock_run() {
         waited=$((waited + 2))
     done
 
-    "$@" &
-    child_pid=$!
+    if [[ -n "$_wtd_setsid" ]]; then
+        # Not a job-control shell, so the backgrounded child is not a group leader
+        # → setsid execs in-place (no fork): child_pid IS the command and leads its
+        # own new session/process group, so `kill -- -child_pid` reaches the tree.
+        "$_wtd_setsid" "$@" &
+        child_pid=$!
+        child_is_group=1
+    else
+        "$@" &
+        child_pid=$!
+    fi
     wait "$child_pid"
     status=$?
     child_pid=""
