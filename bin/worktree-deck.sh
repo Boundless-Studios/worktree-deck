@@ -655,19 +655,27 @@ list_worktrees() {
 }
 
 # Start the dev stack for a worktree (config-driven; no-op when stackless).
+# Handles its own expected outcomes (no stack / cap refusal / start failure) and
+# always returns 0 — so the TUI can call it WITHOUT an `|| true` wrapper, which
+# would otherwise suppress errexit for the whole function and print "✓ Started!"
+# even when the start actually failed.
 start_worktree() {
     local path="$1"
-    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured (set WTD_STACK_START).${NC}"; return; fi
+    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured (set WTD_STACK_START).${NC}"; return 0; fi
     # Concurrent-stack cap (no-op unless WTD_BACKEND_CAP is set). Exclude ALL of
     # this worktree's own container names (template- AND .env-derived) so a
     # restart of an already-counted stack isn't blocked by its own presence.
     local own; own="$(wtd_service_names "$path" 2>/dev/null)"
     if ! wtd_backend_cap_ok "$own"; then
-        return 1
+        return 0  # refusal already explained by wtd_backend_cap_ok; handled, not a crash
     fi
     echo -e "${BLUE}Starting stack for ${BOLD}$(basename "$path")${NC}..."
-    wtd_stack_start "$path"
-    echo -e "${GREEN}✓ Started!${NC}"
+    if wtd_stack_start "$path"; then
+        echo -e "${GREEN}✓ Started!${NC}"
+    else
+        echo -e "${RED}✗ Start failed (see output above).${NC}"
+    fi
+    return 0
 }
 
 # Stop the dev stack for a worktree.
@@ -679,21 +687,26 @@ stop_worktree() {
     echo -e "${GREEN}✓ Stopped!${NC}"
 }
 
-# Restart the dev stack for a worktree.
+# Restart the dev stack for a worktree. Like start_worktree, handles its own
+# outcomes and always returns 0 (no `|| true` needed at the call site).
 restart_worktree() {
     local path="$1"
-    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured.${NC}"; return; fi
+    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured.${NC}"; return 0; fi
     # Restart can START a stopped stack (directly via wtd_stack_restart), so it
     # must honour WTD_BACKEND_CAP just like start_worktree. Exclude ALL of this
     # worktree's own container names so restarting an already-running stack isn't
     # blocked by itself.
     local own; own="$(wtd_service_names "$path" 2>/dev/null)"
     if ! wtd_backend_cap_ok "$own"; then
-        return 1
+        return 0  # refusal already explained; handled, not a crash
     fi
     echo -e "${YELLOW}Restarting stack for ${BOLD}$(basename "$path")${NC}..."
-    wtd_stack_restart "$path"
-    echo -e "${GREEN}✓ Restarted!${NC}"
+    if wtd_stack_restart "$path"; then
+        echo -e "${GREEN}✓ Restarted!${NC}"
+    else
+        echo -e "${RED}✗ Restart failed (see output above).${NC}"
+    fi
+    return 0
 }
 
 # Create a new worktree
@@ -1815,10 +1828,9 @@ worktree_menu() {
                 return
                 ;;
             s|S|start)
-                # `|| true`: an expected refusal (e.g. WTD_BACKEND_CAP full)
-                # returns non-zero; without this the script's `set -e` would exit
-                # the whole console instead of returning to the menu.
-                start_worktree "$path" || true
+                # start_worktree handles its own outcomes and returns 0, so no
+                # `|| true` (which would suppress errexit inside it) is needed.
+                start_worktree "$path"
                 read -p "Press Enter to continue..."
                 ;;
             x|X|stop)
@@ -1826,8 +1838,8 @@ worktree_menu() {
                 read -p "Press Enter to continue..."
                 ;;
             R|restart)
-                # `|| true`: see [s]tart — a cap refusal must not exit the TUI.
-                restart_worktree "$path" || true
+                # restart_worktree handles its own outcomes and returns 0.
+                restart_worktree "$path"
                 read -p "Press Enter to continue..."
                 ;;
             r|resume)
@@ -1865,9 +1877,12 @@ worktree_menu() {
                 read -p "New branch name: " nb
                 if [[ -n "$nb" ]]; then
                     read -p "Base [origin/main]: " base
-                    # `|| true`: an invalid name, fetch/rebase failure, or stash-pop
-                    # conflict returns non-zero; keep that from exiting the console.
-                    wtd_continue_worktree "$path" "$nb" "${base:-origin/main}" || true
+                    # wtd_continue_worktree is self-contained (checks its own git
+                    # steps, doesn't rely on caller errexit), so an `if` here can't
+                    # mask an internal failure as success — it just reports outcome.
+                    if ! wtd_continue_worktree "$path" "$nb" "${base:-origin/main}"; then
+                        echo -e "${YELLOW}Continue did not complete cleanly (see above).${NC}"
+                    fi
                 else
                     echo -e "${YELLOW}Cancelled (no branch name).${NC}"
                 fi

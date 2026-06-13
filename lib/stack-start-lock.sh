@@ -51,6 +51,20 @@ _wtd_lock_pid_is_running() {
     kill -0 "$pid" 2>/dev/null || ps -p "$pid" >/dev/null 2>&1
 }
 
+# Signal a process and all its descendants (depth-first: children before parent).
+# Portable — pgrep -P exists on Linux and macOS. Used to tear down a start
+# command's whole tree (make, docker compose, …) when the lock owner is killed,
+# since the locked command is a bash function and can't be put in its own
+# process group via setsid.
+# shellcheck disable=SC2329  # invoked indirectly via the lock-runner signal traps
+_wtd_kill_tree() {
+    local pid="$1" sig="$2" child
+    for child in $(pgrep -P "$pid" 2>/dev/null); do
+        _wtd_kill_tree "$child" "$sig"
+    done
+    kill "-$sig" "$pid" 2>/dev/null || true
+}
+
 # A token that uniquely identifies a process INSTANCE (not just its PID), so a
 # recycled PID can't be mistaken for the original lock holder.
 _wtd_lock_process_start_token() {
@@ -103,12 +117,7 @@ wtd_stack_start_lock_run() {
     local pidfile="$lock_dir/pid" startfile="$lock_dir/start"
     local reclaim_dir="${lock_dir}.reclaim" reclaim_pid="${lock_dir}.reclaim/pid" reclaim_start="${lock_dir}.reclaim/start"
     local wait_timeout="$WTD_STACK_START_LOCK_TIMEOUT" grace="$WTD_STACK_START_LOCK_MISSING_PID_GRACE"
-    local waited=0 announced=0 child_pid="" status child_is_group=0
-    # Run the start command in its OWN process group (via setsid) when available,
-    # so we can signal the whole start tree — the start command's descendants
-    # (make, docker compose, …) commonly outlive the immediate wrapper. setsid is
-    # absent on stock macOS; there we fall back to single-pid signalling.
-    local _wtd_setsid; _wtd_setsid="$(command -v setsid 2>/dev/null || true)"
+    local waited=0 announced=0 child_pid="" status
 
     # The PID that OWNS the lock for the lifetime of this run. This function is
     # always invoked inside a ( … ) subshell (see wtd_stack_start), and that
@@ -134,14 +143,13 @@ wtd_stack_start_lock_run() {
         local sig="$1" code="$2"
         trap - EXIT INT TERM HUP
         if [[ -n "${child_pid:-}" ]] && kill -0 "$child_pid" 2>/dev/null; then
-            # Signal the whole process group when the child leads one (setsid), so
-            # make/docker-compose descendants die too instead of outliving the
-            # released lock; otherwise signal just the child.
-            if [[ "${child_is_group:-0}" -eq 1 ]]; then
-                kill "-$sig" "-$child_pid" 2>/dev/null || kill "-$sig" "$child_pid" 2>/dev/null || true
-            else
-                kill "-$sig" "$child_pid" 2>/dev/null || true
-            fi
+            # Kill the whole start TREE (child + descendants), so a start command's
+            # children (make, docker compose, …) die with it instead of outliving
+            # the released lock. We can't use setsid to make a process group here:
+            # the locked command is a bash FUNCTION, not an external program, so
+            # setsid would fail to exec it (exit 127). _wtd_kill_tree walks the tree
+            # with pgrep, which is portable across Linux and macOS.
+            _wtd_kill_tree "$child_pid" "$sig"
             wait "$child_pid" 2>/dev/null || true
         fi
         _release
@@ -208,17 +216,8 @@ wtd_stack_start_lock_run() {
         waited=$((waited + 2))
     done
 
-    if [[ -n "$_wtd_setsid" ]]; then
-        # Not a job-control shell, so the backgrounded child is not a group leader
-        # → setsid execs in-place (no fork): child_pid IS the command and leads its
-        # own new session/process group, so `kill -- -child_pid` reaches the tree.
-        "$_wtd_setsid" "$@" &
-        child_pid=$!
-        child_is_group=1
-    else
-        "$@" &
-        child_pid=$!
-    fi
+    "$@" &
+    child_pid=$!
     wait "$child_pid"
     status=$?
     child_pid=""
@@ -244,12 +243,31 @@ wtd_stack_start_lock_health() {
             printf 'repair: worktree-deck lock-health --repair\n' >&2
             return 1
         fi
+        # Re-check under the reclaim mutex right before deleting, so we never wipe a
+        # lock that a start waiter freshly reclaimed between our staleness decision
+        # and this removal (which would let two serialized starts overlap). Mirrors
+        # the waiter's reclaim path.
+        local reclaim_dir="${lock_dir}.reclaim"
+        if ! mkdir "$reclaim_dir" 2>/dev/null; then
+            printf 'stack-start lock is being reclaimed by another process; not repairing.\n' >&2
+            return 1
+        fi
+        local h
+        h="$(cat "$pidfile" 2>/dev/null || true)"
+        if [[ -n "$h" ]] && _wtd_lock_holder_matches_startfile "$h" "$lock_dir/start"; then
+            rm -rf "$reclaim_dir" 2>/dev/null || true
+            printf 'stack-start lock became live (pid %s) during repair; left intact.\n' "$h" >&2
+            return 1
+        fi
+        local rc=1
         if rm -rf "$lock_dir" 2>/dev/null && [[ ! -e "$lock_dir" ]]; then
             printf 'removed stale stack-start lock: %s (%s)\n' "$lock_dir" "$reason"
-            return 0
+            rc=0
+        else
+            printf 'failed to remove stale stack-start lock: %s\n' "$lock_dir" >&2
         fi
-        printf 'failed to remove stale stack-start lock: %s\n' "$lock_dir" >&2
-        return 1
+        rm -rf "$reclaim_dir" 2>/dev/null || true
+        return "$rc"
     }
 
     if [[ ! -e "$lock_dir" ]]; then

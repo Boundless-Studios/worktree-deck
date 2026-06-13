@@ -31,6 +31,20 @@ _wtd_resolve_worktree_path() {
     return 1
 }
 
+# Apply + drop a SPECIFIC stash by its commit sha rather than the global top of
+# stack. refs/stash is shared across a repo's worktrees, so a bare `git stash
+# pop` can apply/drop an unrelated stash another worktree pushed concurrently.
+# Returns non-zero (leaving the stash intact) when the apply conflicts.
+_wtd_stash_pop_ref() {
+    local wt="$1" sha="$2" entry
+    # No sha captured (older path) → best-effort fall back to the classic pop.
+    [[ -n "$sha" ]] || { git -C "$wt" stash pop; return $?; }
+    git -C "$wt" stash apply "$sha" || return 1
+    entry="$(git -C "$wt" stash list --format='%gd %H' 2>/dev/null | awk -v s="$sha" '$2==s{print $1; exit}')"
+    [[ -n "$entry" ]] && git -C "$wt" stash drop "$entry" >/dev/null 2>&1 || true
+    return 0
+}
+
 # wtd_continue_worktree <worktree_path_or_name> <new_branch> [base]
 wtd_continue_worktree() {
     local worktree_path="${1:?Usage: wtd_continue_worktree <worktree_path_or_name> <new_branch> [base]}"
@@ -70,15 +84,27 @@ wtd_continue_worktree() {
     echo "   New branch: $new_branch"
     echo "   Base:       $base"
 
+    # Checked (not bare): this function must not rely on the caller's `set -e`,
+    # so it stays correct when invoked from the TUI menu inside an `if`/`||`
+    # context (where errexit is suppressed for the whole call).
     echo "⟳ Fetching from ${fetch_remote}..."
-    git -C "$worktree_path" fetch "$fetch_remote" --prune
+    if ! git -C "$worktree_path" fetch "$fetch_remote" --prune; then
+        echo "❌ Could not fetch from ${fetch_remote}; aborting." >&2
+        return 1
+    fi
 
-    local stashed=0
+    local stashed=0 stash_sha=""
     if ! git -C "$worktree_path" diff --quiet \
         || ! git -C "$worktree_path" diff --cached --quiet \
         || [[ -n "$(git -C "$worktree_path" ls-files --others --exclude-standard)" ]]; then
         echo "⚠️  Stashing local changes (including untracked)..."
-        git -C "$worktree_path" stash push -u -m "continue-worktree: auto-stash before branch switch"
+        if ! git -C "$worktree_path" stash push -u -m "continue-worktree: auto-stash before branch switch"; then
+            echo "❌ Could not stash local changes; aborting." >&2
+            return 1
+        fi
+        # Capture OUR stash's commit sha so we restore exactly it later, even if a
+        # sibling worktree pushes another stash onto the shared ref meanwhile.
+        stash_sha="$(git -C "$worktree_path" rev-parse -q --verify 'stash@{0}' 2>/dev/null || echo "")"
         stashed=1
     fi
 
@@ -97,9 +123,16 @@ wtd_continue_worktree() {
     if [[ "$switch_ok" -ne 1 ]]; then
         echo "❌ Could not switch to '$new_branch' (base $base)." >&2
         git -C "$worktree_path" rebase --abort 2>/dev/null || true
+        # An existing-branch checkout may have already moved us off the user's
+        # original branch before the rebase failed — return there before
+        # restoring edits, so the stash doesn't reapply onto the wrong branch.
+        if [[ -n "$current_branch" ]]; then
+            git -C "$worktree_path" checkout "$current_branch" 2>/dev/null \
+                || echo "⚠️  Could not return to '$current_branch' — currently detached/elsewhere." >&2
+        fi
         if [[ "$stashed" -eq 1 ]]; then
-            echo "↩️  Restoring your auto-stashed changes..." >&2
-            git -C "$worktree_path" stash pop \
+            echo "↩️  Restoring your auto-stashed changes onto '${current_branch:-the original branch}'..." >&2
+            _wtd_stash_pop_ref "$worktree_path" "$stash_sha" \
                 || echo "⚠️  Could not auto-restore the stash — your changes are safe; see 'git stash list'." >&2
         fi
         return 1
@@ -118,8 +151,8 @@ wtd_continue_worktree() {
 
     if [[ "$stashed" -eq 1 ]]; then
         echo "✓ Restoring stashed changes..."
-        if ! git -C "$worktree_path" stash pop; then
-            echo "❌ Stash pop hit conflicts — your changes remain in the stash; resolve them manually." >&2
+        if ! _wtd_stash_pop_ref "$worktree_path" "$stash_sha"; then
+            echo "❌ Stash apply hit conflicts — your changes remain in the stash; resolve them manually." >&2
             echo "   Worktree is on '$new_branch' (base $base) but is NOT clean." >&2
             return 1
         fi

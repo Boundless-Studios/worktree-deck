@@ -210,6 +210,12 @@ _wtd_serialize_stack_start() {
     case "${WTD_SERIALIZE_STACK_START:-}" in 1|true|yes|on|TRUE|YES|ON) return 0 ;; *) return 1 ;; esac
 }
 
+# True when a concurrent-stack cap is configured.
+_wtd_cap_enabled() {
+    local cap="${WTD_BACKEND_CAP:-0}"
+    [[ "$cap" =~ ^[0-9]+$ ]] && [[ "$cap" -gt 0 ]]
+}
+
 # Re-check the concurrent-stack cap immediately before the start command. Used
 # INSIDE the serialized start lock so two starts that both passed the caller's
 # pre-lock cap check can't both proceed once serialized — the second one re-tests
@@ -221,13 +227,16 @@ _wtd_capped_run_stack_cmd() {
     _wtd_run_stack_cmd "$cmd" "$path"
 }
 
-# Run a stack bring-up command ($1) for a worktree ($2). When
-# WTD_SERIALIZE_STACK_START is enabled, run it under the host-global start lock
-# (in a subshell so the lock's signal traps don't leak into the caller) with an
-# in-lock cap re-check; otherwise run it directly.
+# Run a stack bring-up command ($1) for a worktree ($2). Route through the
+# host-global start lock (in a subshell so the lock's signal traps don't leak
+# into the caller) with an in-lock cap re-check when EITHER serialization is on
+# OR a backend cap is configured — the cap needs the lock to be atomic, since two
+# unserialized starts could otherwise both pass the pre-lock check and exceed it.
+# Otherwise run directly.
 _wtd_serialized_stack_cmd() {
     local cmd="$1" path="$2"
-    if _wtd_serialize_stack_start && declare -F wtd_stack_start_lock_run >/dev/null 2>&1; then
+    if { _wtd_serialize_stack_start || _wtd_cap_enabled; } \
+        && declare -F wtd_stack_start_lock_run >/dev/null 2>&1; then
         ( wtd_stack_start_lock_run _wtd_capped_run_stack_cmd "$path" "$cmd" "$path" )
     else
         _wtd_run_stack_cmd "$cmd" "$path"
