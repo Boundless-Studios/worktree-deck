@@ -18,6 +18,23 @@
 # WTD_STACK_START="make start-worktree"
 # WTD_STACK_STOP="make stop-worktree"
 # WTD_E2E_CMD="make e2e-test"
+#
+# Serialize stack-start host-globally (only one worktree's start runs at a time).
+# Off by default; enable when your start command touches host-global resources
+# (a shared file-sync session, a shared image builder, shared background sweeps)
+# that two concurrent starts would trample. Diagnose/repair the lock with
+# `worktree-deck lock-health [--repair]`. Tunables: WTD_STACK_START_LOCK (path),
+# WTD_STACK_START_LOCK_TIMEOUT (default 1800s), WTD_STACK_START_LOCK_LONG_HELD.
+# WTD_SERIALIZE_STACK_START=1
+#
+# Refuse to start a worktree's stack when this many stacks are already running
+# (0/unset = unlimited). Counts running containers derived from the first
+# WTD_SERVICE_TEMPLATES entry, so it caps concurrent stacks to protect host RAM.
+# WTD_BACKEND_CAP=7
+#
+# Command run (worktree as cwd) to regenerate a worktree's env after
+# `worktree-deck continue` switches its branch. Empty => skip (re-run start).
+# WTD_ENV_REGEN_CMD="bash scripts/worktree-env.sh"
 
 # --- .env keys the console reads for display -------------------------------
 # WTD_BACKEND_PORT_KEY="BACKEND_PORT"

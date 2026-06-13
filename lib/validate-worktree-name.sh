@@ -3,7 +3,7 @@
 #
 # Centralizes the guard so new-wt (Makefile), the worktree console, and
 # continue-worktree all reject the same bad inputs with a clear message
-# instead of git's cryptic "error: unknown switch o": a name
+# instead of git's cryptic "error: unknown switch o" (origin: gaia BOU-1418): a name
 # that starts with '-' is read by git's internal `git branch` as a bundle
 # of command-line flags.
 #

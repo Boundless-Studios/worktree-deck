@@ -98,6 +98,24 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # (e.g. "agentic-pr-dash record"). Empty => no session bridge.
 : "${WTD_EVENT_SINK:=}"
 
+# Optional: serialize stack-start host-globally (only one worktree's start runs
+# at a time). Off by default; set to 1/true when your start command touches
+# host-global resources (a shared file-sync session, a shared image builder,
+# shared background sweeps) that two concurrent starts would trample. See
+# stack-start-lock.sh for WTD_STACK_START_LOCK* tuning.
+: "${WTD_SERIALIZE_STACK_START:=}"
+
+# Optional: refuse to start a worktree's stack when this many stacks are already
+# running (0/unset => unlimited). Counts running containers derived from the
+# first WTD_SERVICE_TEMPLATES entry (the "primary" service), so it caps
+# concurrent stacks the way a backend-count cap would. Guards shared-host memory.
+: "${WTD_BACKEND_CAP:=0}"
+
+# Optional: command run (with the worktree as cwd) to regenerate a worktree's
+# env after continue-worktree switches its branch. Empty => skip (re-run your
+# stack-start command instead). e.g. "bash scripts/worktree-env.sh".
+: "${WTD_ENV_REGEN_CMD:=}"
+
 # ---------------------------------------------------------------------------
 # Config file loading
 # ---------------------------------------------------------------------------
@@ -181,7 +199,21 @@ _wtd_run_stack_cmd() {
     fi
 }
 
-wtd_stack_start()   { _wtd_run_stack_cmd "$WTD_STACK_START" "$1"; }
+# True when host-global start serialization is enabled.
+_wtd_serialize_stack_start() {
+    case "${WTD_SERIALIZE_STACK_START:-}" in 1|true|yes|on|TRUE|YES|ON) return 0 ;; *) return 1 ;; esac
+}
+
+# Bring a worktree's stack up. When WTD_SERIALIZE_STACK_START is enabled, run it
+# under the host-global start lock (in a subshell so the lock's signal traps
+# don't leak into the caller). Otherwise run it directly.
+wtd_stack_start() {
+    if _wtd_serialize_stack_start && declare -F wtd_stack_start_lock_run >/dev/null 2>&1; then
+        ( wtd_stack_start_lock_run _wtd_run_stack_cmd "$WTD_STACK_START" "$1" )
+    else
+        _wtd_run_stack_cmd "$WTD_STACK_START" "$1"
+    fi
+}
 wtd_stack_stop()    { _wtd_run_stack_cmd "$WTD_STACK_STOP" "$1"; }
 wtd_stack_restart() {
     if [[ -n "$WTD_STACK_RESTART" ]]; then
@@ -193,3 +225,47 @@ wtd_stack_restart() {
 
 # True when a dev stack is configured at all.
 wtd_has_stack() { [[ ${#WTD_SERVICE_TEMPLATES[@]} -gt 0 || -n "$WTD_STACK_START" ]]; }
+
+# Static base of the primary service template (first WTD_SERVICE_TEMPLATES entry
+# with the {suffix} placeholder removed), e.g. "myapp-backend". Empty when no
+# templates are configured. Used by the concurrent-stack cap.
+_wtd_primary_service_base() {
+    [[ ${#WTD_SERVICE_TEMPLATES[@]} -gt 0 ]] || return 0
+    local base="${WTD_SERVICE_TEMPLATES[0]}"
+    printf '%s' "${base//\{suffix\}/}"
+}
+
+# Cap guard: return non-zero (and explain) when starting another stack would
+# exceed WTD_BACKEND_CAP. $1 = this worktree's own primary container name to
+# exclude from the count (optional). No-op when the cap is unset/0 or no
+# templates/Docker are configured.
+wtd_backend_cap_ok() {
+    local cap="${WTD_BACKEND_CAP:-0}"
+    [[ "$cap" =~ ^[0-9]+$ ]] || cap=0
+    [[ "$cap" -gt 0 ]] || return 0
+    local base; base="$(_wtd_primary_service_base)"
+    [[ -n "$base" ]] || return 0
+    command -v docker >/dev/null 2>&1 || return 0
+
+    local own="${1:-}" running count
+    running="$(docker ps --filter "name=${base}" --filter 'status=running' --format '{{.Names}}' 2>/dev/null | grep -v '^$' || true)"
+    if [[ -n "$own" ]]; then
+        running="$(printf '%s\n' "$running" | grep -vxF "$own" || true)"
+    fi
+    count="$(printf '%s\n' "$running" | grep -c . || true)"
+    if [[ "$count" -ge "$cap" ]]; then
+        echo "❌ Cannot start: ${count} stack(s) already running (cap WTD_BACKEND_CAP=${cap})." >&2
+        printf '%s\n' "$running" | grep -v '^$' | sed 's/^/     - /' >&2
+        echo "   Free a slot (stop/remove a stale worktree) or raise WTD_BACKEND_CAP." >&2
+        return 1
+    fi
+    return 0
+}
+
+# Source the optional capability libs (start-lock serialization, continue-
+# worktree) so their functions are available to the console and CLI subcommands.
+_WTD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=stack-start-lock.sh
+[[ -r "$_WTD_LIB_DIR/stack-start-lock.sh" ]] && source "$_WTD_LIB_DIR/stack-start-lock.sh"
+# shellcheck source=continue-worktree.sh
+[[ -r "$_WTD_LIB_DIR/continue-worktree.sh" ]] && source "$_WTD_LIB_DIR/continue-worktree.sh"

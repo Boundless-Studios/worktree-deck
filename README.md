@@ -132,6 +132,38 @@ Typically that command runs `docker compose up` with the worktree's `.env`
 (its slot, ports, and container names). `worktree-deck` orchestrates *which*
 worktree and *when*; your command owns the *how*.
 
+#### Serialized starts, a concurrency cap, and continue-worktree
+
+Three optional, config-gated behaviors help when several worktrees share a host:
+
+- **Serialize starts.** Set `WTD_SERIALIZE_STACK_START=1` and only one worktree's
+  start runs at a time. Useful when your start command touches *host-global*
+  resources (a shared file-sync session, a shared image builder, shared cleanup
+  sweeps) that two concurrent starts would trample. The lock is an advisory,
+  host-scoped `mkdir` lock with PID + process-start-token stale reclaim (no
+  `flock` needed, so it works on macOS). Diagnose or repair a stuck lock with:
+
+  ```bash
+  worktree-deck lock-health            # report holder + how long it's been held
+  worktree-deck lock-health --repair   # clear it only if the holder is dead/stale
+  ```
+
+- **Cap concurrent stacks.** Set `WTD_BACKEND_CAP=N` to refuse a start once `N`
+  stacks are already running (counted from the first `WTD_SERVICE_TEMPLATES`
+  entry). Protects a shared host from running out of RAM.
+
+- **Continue on a new branch.** After a PR merges and its branch is deleted, keep
+  the worktree and repoint it onto a fresh branch instead of recreating it — from
+  the worktree action menu (`[n]ext`) or the CLI:
+
+  ```bash
+  worktree-deck continue <worktree-name-or-path> <new-branch> [base]   # base defaults to origin/main
+  ```
+
+  It validates the name, fetches the base, stashes local work, creates/rebases the
+  branch, pushes with upstream tracking, regenerates env via `WTD_ENV_REGEN_CMD`
+  (if set), and pops the stash.
+
 ### Don't use Docker? It still helps.
 
 The entire stack layer is optional. Omit `WTD_SERVICE_TEMPLATES` /
