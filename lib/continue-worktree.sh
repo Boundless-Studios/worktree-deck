@@ -15,15 +15,40 @@
 # WTD_ENV_REGEN_CMD (run with the worktree as cwd) to your slot/port/.env
 # generator, or leave it empty and re-run your stack-start command afterward.
 
-# wtd_continue_worktree <worktree_path> <new_branch> [base]
+# Resolve a worktree NAME (path basename or branch) to its absolute path using
+# `git worktree list`. Echoes the path on success, nothing on no match.
+_wtd_resolve_worktree_path() {
+    local needle="$1" path="" branch="" line
+    _match() { [[ -n "$path" ]] && { [[ "$(basename "$path")" == "$needle" || "$branch" == "$needle" ]]; }; }
+    while IFS= read -r line; do
+        case "$line" in
+            "worktree "*) path="${line#worktree }" ;;
+            "branch "*)   branch="${line#branch }"; branch="${branch#refs/heads/}" ;;
+            "")           if _match; then printf '%s\n' "$path"; return 0; fi; path=""; branch="" ;;
+        esac
+    done < <(git worktree list --porcelain 2>/dev/null)
+    if _match; then printf '%s\n' "$path"; return 0; fi
+    return 1
+}
+
+# wtd_continue_worktree <worktree_path_or_name> <new_branch> [base]
 wtd_continue_worktree() {
-    local worktree_path="${1:?Usage: wtd_continue_worktree <worktree_path> <new_branch> [base]}"
-    local new_branch="${2:?Usage: wtd_continue_worktree <worktree_path> <new_branch> [base]}"
+    local worktree_path="${1:?Usage: wtd_continue_worktree <worktree_path_or_name> <new_branch> [base]}"
+    local new_branch="${2:?Usage: wtd_continue_worktree <worktree_path_or_name> <new_branch> [base]}"
     local base="${3:-origin/main}"
 
+    # The first argument may be a worktree NAME (as the README/CLI advertise)
+    # rather than a path. If it doesn't resolve to a directory directly, look it
+    # up in the worktree list (by path basename or branch) before rejecting it.
     if [[ ! -d "$worktree_path" ]]; then
-        echo "continue-worktree: '$worktree_path' is not a directory" >&2
-        return 1
+        local _resolved
+        _resolved="$(_wtd_resolve_worktree_path "$worktree_path")"
+        if [[ -n "$_resolved" && -d "$_resolved" ]]; then
+            worktree_path="$_resolved"
+        else
+            echo "continue-worktree: '$worktree_path' is not a worktree path or name" >&2
+            return 1
+        fi
     fi
 
     local lib_dir
@@ -77,7 +102,11 @@ wtd_continue_worktree() {
 
     if [[ "$stashed" -eq 1 ]]; then
         echo "✓ Restoring stashed changes..."
-        git -C "$worktree_path" stash pop || echo "⚠️  Stash pop had conflicts — resolve manually"
+        if ! git -C "$worktree_path" stash pop; then
+            echo "❌ Stash pop hit conflicts — your changes remain in the stash; resolve them manually." >&2
+            echo "   Worktree is on '$new_branch' (base $base) but is NOT clean." >&2
+            return 1
+        fi
     fi
 
     echo "✅ Worktree continued on '$new_branch' (base $base)."

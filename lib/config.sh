@@ -248,7 +248,11 @@ wtd_backend_cap_ok() {
     command -v docker >/dev/null 2>&1 || return 0
 
     local own="${1:-}" running count
-    running="$(docker ps --filter "name=${base}" --filter 'status=running' --format '{{.Names}}' 2>/dev/null | grep -v '^$' || true)"
+    # Docker's `name` filter is an unanchored substring/regex match, so a generic
+    # base like "api"/"backend" would also count unrelated containers that merely
+    # CONTAIN it (e.g. "other-backend-x"). Anchor to the start (^base) so the cap
+    # only reflects THIS project's stack containers (named "<base><suffix>").
+    running="$(docker ps --filter "name=^${base}" --filter 'status=running' --format '{{.Names}}' 2>/dev/null | grep -v '^$' || true)"
     if [[ -n "$own" ]]; then
         running="$(printf '%s\n' "$running" | grep -vxF "$own" || true)"
     fi

@@ -78,11 +78,16 @@ _wtd_lock_holder_matches_startfile() {
     [[ "$actual" == "$expected" ]]
 }
 
+# $3 is the PID to record as the lock owner. It MUST be the process that stays
+# alive for the whole locked run (the subshell wrapping wtd_stack_start_lock_run),
+# NOT its parent — otherwise killing the parent leaves a live start behind a
+# pidfile pointing at a dead pid, which lock-health/waiters would reclaim as
+# stale and let a second start overlap.
 _wtd_lock_write_owner_metadata() {
-    local pidfile="$1" startfile="$2" owner_start
-    owner_start="$(_wtd_lock_process_start_token "$$")"
+    local pidfile="$1" startfile="$2" owner_pid="$3" owner_start
+    owner_start="$(_wtd_lock_process_start_token "$owner_pid")"
     [[ -n "$owner_start" ]] || return 1
-    printf '%s\n' "$$" >"$pidfile" && printf '%s\n' "$owner_start" >"$startfile"
+    printf '%s\n' "$owner_pid" >"$pidfile" && printf '%s\n' "$owner_start" >"$startfile"
 }
 
 # Acquire the lock, run "$@", release on any exit path. Only the owner releases.
@@ -100,12 +105,24 @@ wtd_stack_start_lock_run() {
     local wait_timeout="$WTD_STACK_START_LOCK_TIMEOUT" grace="$WTD_STACK_START_LOCK_MISSING_PID_GRACE"
     local waited=0 announced=0 child_pid="" status
 
+    # The PID that OWNS the lock for the lifetime of this run. This function is
+    # always invoked inside a ( … ) subshell (see wtd_stack_start), and that
+    # subshell is the process that survives for the whole locked command — so
+    # record ITS pid, not the parent's ($$). BASHPID is the subshell pid in
+    # bash 4+; fall back to a portable $PPID probe for bash 3.2 (macOS system bash).
+    local self_pid="${BASHPID:-$(sh -c 'echo "$PPID"')}"
+    # Ensure the lock's PARENT exists before mkdir-locking below. For a custom
+    # WTD_STACK_START_LOCK under a not-yet-created directory, mkdir "$lock_dir"
+    # would fail with ENOENT, which the wait loop would misread as contention and
+    # spin to the timeout instead of acquiring.
+    mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
+
     _release() {
         local owner
         owner="$(cat "$reclaim_pid" 2>/dev/null || true)"
-        [[ "$owner" == "$$" ]] && rm -rf "$reclaim_dir" 2>/dev/null || true
+        [[ "$owner" == "$self_pid" ]] && rm -rf "$reclaim_dir" 2>/dev/null || true
         owner="$(cat "$pidfile" 2>/dev/null || true)"
-        [[ "$owner" == "$$" ]] && rm -rf "$lock_dir" 2>/dev/null || true
+        [[ "$owner" == "$self_pid" ]] && rm -rf "$lock_dir" 2>/dev/null || true
     }
     # shellcheck disable=SC2329  # invoked indirectly via the signal traps below
     _terminate() {
@@ -123,7 +140,7 @@ wtd_stack_start_lock_run() {
     # never wiped (which would let two starts run at once).
     _acquire_reclaim() {
         if mkdir "$reclaim_dir" 2>/dev/null; then
-            _wtd_lock_write_owner_metadata "$reclaim_pid" "$reclaim_start" && return 0
+            _wtd_lock_write_owner_metadata "$reclaim_pid" "$reclaim_start" "$self_pid" && return 0
             rm -rf "$reclaim_dir" 2>/dev/null || true
         fi
         return 1
@@ -136,7 +153,7 @@ wtd_stack_start_lock_run() {
 
     while true; do
         if mkdir "$lock_dir" 2>/dev/null; then
-            if ! _wtd_lock_write_owner_metadata "$pidfile" "$startfile"; then
+            if ! _wtd_lock_write_owner_metadata "$pidfile" "$startfile" "$self_pid"; then
                 echo "[stack-start-lock] failed to record lock owner metadata; aborting." >&2
                 rm -rf "$lock_dir" 2>/dev/null || true
                 trap - EXIT INT TERM HUP

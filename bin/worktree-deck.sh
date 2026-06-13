@@ -683,6 +683,13 @@ stop_worktree() {
 restart_worktree() {
     local path="$1"
     if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured.${NC}"; return; fi
+    # Restart can START a stopped stack (directly via wtd_stack_restart), so it
+    # must honour WTD_BACKEND_CAP just like start_worktree. Exclude this worktree's
+    # own container so restarting an already-running stack isn't blocked by itself.
+    local own; own="$(wtd_service_names "$path" 2>/dev/null | head -1)"
+    if ! wtd_backend_cap_ok "$own"; then
+        return 1
+    fi
     echo -e "${YELLOW}Restarting stack for ${BOLD}$(basename "$path")${NC}..."
     wtd_stack_restart "$path"
     echo -e "${GREEN}✓ Restarted!${NC}"
