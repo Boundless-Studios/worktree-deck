@@ -2,7 +2,11 @@
 # Launch an interactive agent CLI inside a worktree, with a consistent terminal
 # title and an optional session-event bridge (WTD_EVENT_SINK).
 #
-# Usage: launch-worktree-cli.sh <worktree_path> [launch_flag]
+# Usage: launch-worktree-cli.sh <worktree_path> [launch_flag] [extra_cli_args]
+#
+# [extra_cli_args] is an optional whitespace-separated string appended verbatim
+# to the launched CLI command (e.g. resume flags: "--continue" for Claude,
+# "resume --last" for Codex). Omit it for a normal fresh launch.
 set -euo pipefail
 
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -27,6 +31,10 @@ fi
 LABEL="$(wtd_launch_label_from_flag "$LAUNCH_FLAG")"
 CLI_COMMAND="$(wtd_launch_cli_from_flag "$LAUNCH_FLAG")"
 
+# Optional extra args appended to the CLI command (e.g. resume flags). Word-split
+# on purpose so a caller can pass "resume --last" as a single argument.
+EXTRA_CLI_ARGS="${3:-}"
+
 # Session id is opaque; used only to correlate start/end events.
 SESSION_ID="${WTD_SESSION_ID:-wtd-$$-$(git -C "$WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo nohead)}"
 
@@ -49,7 +57,7 @@ export WTD_PROJECT_DIR="$WORKTREE_PATH" WTD_SESSION_ID="$SESSION_ID"
 _emit_event started
 rc=0
 # shellcheck disable=SC2086
-${CLI_COMMAND} || rc=$?
+${CLI_COMMAND} ${EXTRA_CLI_ARGS} || rc=$?
 if [[ $rc -eq 0 ]]; then
     _emit_event completed "$rc"
 else

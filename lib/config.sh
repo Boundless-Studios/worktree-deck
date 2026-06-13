@@ -98,6 +98,12 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # (e.g. "agentic-pr-dash record"). Empty => no session bridge.
 : "${WTD_EVENT_SINK:=}"
 
+# Optional: a command that, given a worktree path as its final argument, prints
+# the agent CLI (e.g. "claude" or "codex") of the MOST RECENT session in that
+# worktree — used by the resume action (`<n>r`) to relaunch the right agent.
+# Empty => resume falls back to the worktree's default launcher.
+: "${WTD_LAST_AGENT_CMD:=}"
+
 # ---------------------------------------------------------------------------
 # Config file loading
 # ---------------------------------------------------------------------------

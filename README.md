@@ -152,11 +152,16 @@ column — and nothing Docker-related.
 - **Launch an agent CLI** (Claude Code, Codex, aider, …) *inside* a worktree, in
   a new terminal tab, with the right working directory — with an optional
   session-event bridge (`WTD_EVENT_SINK`).
+- **Resume an agent** (`<n>r`) — relaunch the agent that last worked a worktree
+  with its resume flags (`claude --continue` / `codex resume --last`). Which
+  agent ran last comes from the optional `WTD_LAST_AGENT_CMD` hook; without it,
+  resume uses the worktree's default launcher.
 - **Open** the frontend in a browser, the worktree in VS Code, or tail its
   container logs.
 - **Container hygiene** — remove dead/exited containers and sweep orphans, scoped
   to your project's container prefix.
-- **Quick commands** — `7s` = select #7 + start, `7dy` = delete #7 + confirm.
+- **Quick commands** — `7s` = select #7 + start, `1r` = resume #1's last agent,
+  `7dy` = delete #7 + confirm.
 
 ## Install
 
@@ -207,6 +212,11 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 
 # --- optional: bridge worktree session events to another tool ---
 # WTD_EVENT_SINK="agentic-pr-dash record"
+
+# --- optional: tell the resume action (<n>r) which agent last ran a worktree ---
+# Receives the worktree path as its final arg; prints "claude" or "codex".
+# Without this, resume just relaunches the worktree's default launcher.
+# WTD_LAST_AGENT_CMD="agentic-pr-dash last-agent"
 
 # --- optional: background daemons the console can toggle (e.g. a dashboard) ---
 # WTD_DAEMONS=(dash)
