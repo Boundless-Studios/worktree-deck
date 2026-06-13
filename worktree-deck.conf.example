@@ -38,5 +38,9 @@ WTD_AGENT_LAUNCHERS=(claude codex)
 # --- Optional: bridge session events to another tool -----------------------
 # WTD_EVENT_SINK="agentic-pr-dash record"
 
+# --- Optional: which agent last ran a worktree (for the resume action <n>r) -
+# Receives the worktree path as its final arg; prints "claude" or "codex".
+# WTD_LAST_AGENT_CMD="agentic-pr-dash last-agent"
+
 # --- Optional: background daemons the console can toggle --------------------
 # WTD_DAEMONS=(agentic-pr-dash)
