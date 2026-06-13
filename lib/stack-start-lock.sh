@@ -82,10 +82,10 @@ _wtd_lock_process_start_token() {
     fi
 }
 
-_wtd_lock_holder_matches_startfile() {
-    local pid="$1" startfile="$2" expected actual
+_wtd_lock_holder_token_matches() {
+    local pid="$1" tokenfile="$2" expected actual
     _wtd_lock_pid_is_running "$pid" || return 1
-    expected="$(cat "$startfile" 2>/dev/null || true)"
+    expected="$(cat "$tokenfile" 2>/dev/null || true)"
     [[ -z "$expected" ]] && return 0
     actual="$(_wtd_lock_process_start_token "$pid")"
     [[ -z "$actual" ]] && return 0
@@ -98,10 +98,10 @@ _wtd_lock_holder_matches_startfile() {
 # pidfile pointing at a dead pid, which lock-health/waiters would reclaim as
 # stale and let a second start overlap.
 _wtd_lock_write_owner_metadata() {
-    local pidfile="$1" startfile="$2" owner_pid="$3" owner_start
+    local pidfile="$1" tokenfile="$2" owner_pid="$3" owner_start
     owner_start="$(_wtd_lock_process_start_token "$owner_pid")"
     [[ -n "$owner_start" ]] || return 1
-    printf '%s\n' "$owner_pid" >"$pidfile" && printf '%s\n' "$owner_start" >"$startfile"
+    printf '%s\n' "$owner_pid" >"$pidfile" && printf '%s\n' "$owner_start" >"$tokenfile"
 }
 
 # Acquire the lock, run "$@", release on any exit path. Only the owner releases.
@@ -114,10 +114,10 @@ wtd_stack_start_lock_run() {
     set +e
 
     local lock_dir="$WTD_STACK_START_LOCK"
-    local pidfile="$lock_dir/pid" startfile="$lock_dir/start"
-    local reclaim_dir="${lock_dir}.reclaim" reclaim_pid="${lock_dir}.reclaim/pid" reclaim_start="${lock_dir}.reclaim/start"
+    local pidfile="$lock_dir/pid" tokenfile="$lock_dir/token"
+    local reclaim_dir="${lock_dir}.reclaim" reclaim_pid="${lock_dir}.reclaim/pid" reclaim_token="${lock_dir}.reclaim/token"
     local wait_timeout="$WTD_STACK_START_LOCK_TIMEOUT" grace="$WTD_STACK_START_LOCK_MISSING_PID_GRACE"
-    local waited=0 announced=0 child_pid="" status
+    local waited=0 announced_waiting=0 child_pid="" status
 
     # The PID that OWNS the lock for the lifetime of this run. This function is
     # always invoked inside a ( … ) subshell (see wtd_stack_start), and that
@@ -160,7 +160,7 @@ wtd_stack_start_lock_run() {
     # never wiped (which would let two starts run at once).
     _acquire_reclaim() {
         if mkdir "$reclaim_dir" 2>/dev/null; then
-            _wtd_lock_write_owner_metadata "$reclaim_pid" "$reclaim_start" "$self_pid" && return 0
+            _wtd_lock_write_owner_metadata "$reclaim_pid" "$reclaim_token" "$self_pid" && return 0
             rm -rf "$reclaim_dir" 2>/dev/null || true
         fi
         return 1
@@ -173,7 +173,7 @@ wtd_stack_start_lock_run() {
 
     while true; do
         if mkdir "$lock_dir" 2>/dev/null; then
-            if ! _wtd_lock_write_owner_metadata "$pidfile" "$startfile" "$self_pid"; then
+            if ! _wtd_lock_write_owner_metadata "$pidfile" "$tokenfile" "$self_pid"; then
                 echo "[stack-start-lock] failed to record lock owner metadata; aborting." >&2
                 rm -rf "$lock_dir" 2>/dev/null || true
                 trap - EXIT INT TERM HUP
@@ -182,18 +182,20 @@ wtd_stack_start_lock_run() {
             break
         fi
 
-        local holder
-        holder="$(cat "$pidfile" 2>/dev/null || true)"
-        if [[ -z "$holder" ]] || ! _wtd_lock_holder_matches_startfile "$holder" "$startfile"; then
+        local holder_pid
+        holder_pid="$(cat "$pidfile" 2>/dev/null || true)"
+        if [[ -z "$holder_pid" ]] || ! _wtd_lock_holder_token_matches "$holder_pid" "$tokenfile"; then
             local reclaimed=0
             if _acquire_reclaim; then
-                local h
-                h="$(cat "$pidfile" 2>/dev/null || true)"
-                if [[ -z "$h" ]] && _wtd_lock_path_old_enough "$lock_dir" "$grace"; then
+                # Re-read the holder under the reclaim mutex: another waiter may have
+                # taken a fresh, LIVE lock between our check above and now.
+                local recheck_pid
+                recheck_pid="$(cat "$pidfile" 2>/dev/null || true)"
+                if [[ -z "$recheck_pid" ]] && _wtd_lock_path_old_enough "$lock_dir" "$grace"; then
                     echo "[stack-start-lock] reclaiming stale lock with missing pidfile" >&2
                     rm -rf "$lock_dir" 2>/dev/null && [[ ! -e "$lock_dir" ]] && reclaimed=1
-                elif [[ -n "$h" ]] && ! _wtd_lock_holder_matches_startfile "$h" "$startfile"; then
-                    echo "[stack-start-lock] reclaiming stale lock from dead pid $h" >&2
+                elif [[ -n "$recheck_pid" ]] && ! _wtd_lock_holder_token_matches "$recheck_pid" "$tokenfile"; then
+                    echo "[stack-start-lock] reclaiming stale lock from dead pid $recheck_pid" >&2
                     rm -rf "$lock_dir" 2>/dev/null && [[ ! -e "$lock_dir" ]] && reclaimed=1
                 fi
                 rm -rf "$reclaim_dir" 2>/dev/null || true
@@ -201,13 +203,13 @@ wtd_stack_start_lock_run() {
             [[ "$reclaimed" -eq 1 ]] && continue
         fi
 
-        if [[ "$announced" -eq 0 ]]; then
-            echo "[stack-start-lock] another stack start is running (pid ${holder:-?}); waiting…" >&2
+        if [[ "$announced_waiting" -eq 0 ]]; then
+            echo "[stack-start-lock] another stack start is running (pid ${holder_pid:-?}); waiting…" >&2
             echo "[stack-start-lock] inspect: worktree-deck lock-health   repair: worktree-deck lock-health --repair" >&2
-            announced=1
+            announced_waiting=1
         fi
         if [[ "$wait_timeout" -gt 0 && "$waited" -ge "$wait_timeout" ]]; then
-            echo "[stack-start-lock] timed out after ${wait_timeout}s waiting for pid ${holder:-?}." >&2
+            echo "[stack-start-lock] timed out after ${wait_timeout}s waiting for pid ${holder_pid:-?}." >&2
             trap - EXIT INT TERM HUP
             _release
             return 1
@@ -252,22 +254,22 @@ wtd_stack_start_lock_health() {
             printf 'stack-start lock is being reclaimed by another process; not repairing.\n' >&2
             return 1
         fi
-        local h
-        h="$(cat "$pidfile" 2>/dev/null || true)"
-        if [[ -n "$h" ]] && _wtd_lock_holder_matches_startfile "$h" "$lock_dir/start"; then
+        local live_pid
+        live_pid="$(cat "$pidfile" 2>/dev/null || true)"
+        if [[ -n "$live_pid" ]] && _wtd_lock_holder_token_matches "$live_pid" "$lock_dir/token"; then
             rm -rf "$reclaim_dir" 2>/dev/null || true
-            printf 'stack-start lock became live (pid %s) during repair; left intact.\n' "$h" >&2
+            printf 'stack-start lock became live (pid %s) during repair; left intact.\n' "$live_pid" >&2
             return 1
         fi
-        local rc=1
+        local removed=1
         if rm -rf "$lock_dir" 2>/dev/null && [[ ! -e "$lock_dir" ]]; then
             printf 'removed stale stack-start lock: %s (%s)\n' "$lock_dir" "$reason"
-            rc=0
+            removed=0
         else
             printf 'failed to remove stale stack-start lock: %s\n' "$lock_dir" >&2
         fi
         rm -rf "$reclaim_dir" 2>/dev/null || true
-        return "$rc"
+        return "$removed"
     }
 
     if [[ ! -e "$lock_dir" ]]; then
@@ -289,7 +291,7 @@ wtd_stack_start_lock_health() {
     fi
     printf 'pid: %s\n' "$pid"
 
-    if ! _wtd_lock_holder_matches_startfile "$pid" "$lock_dir/start"; then
+    if ! _wtd_lock_holder_token_matches "$pid" "$lock_dir/token"; then
         _remove_if_stale "dead or mismatched owner pid $pid"; return $?
     fi
 

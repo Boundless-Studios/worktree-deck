@@ -216,41 +216,41 @@ _wtd_cap_enabled() {
     [[ "$cap" =~ ^[0-9]+$ ]] && [[ "$cap" -gt 0 ]]
 }
 
-# Re-check the concurrent-stack cap immediately before the start command. Used
-# INSIDE the serialized start lock so two starts that both passed the caller's
-# pre-lock cap check can't both proceed once serialized — the second one re-tests
-# after the first's container exists and is correctly refused.
-_wtd_capped_run_stack_cmd() {
-    local wt_path="$1" cmd="$2" path="$3"
-    local own; own="$(wtd_service_names "$wt_path" 2>/dev/null || true)"
-    wtd_backend_cap_ok "$own" || return 1
-    _wtd_run_stack_cmd "$cmd" "$path"
+# Like _wtd_run_stack_cmd, but re-checks the concurrent-stack cap immediately
+# before running. Used INSIDE the serialized start lock so two starts that both
+# passed the caller's pre-lock cap check can't both proceed once serialized — the
+# second one re-tests after the first's container exists and is correctly refused.
+_wtd_run_stack_cmd_with_cap() {
+    local stack_cmd="$1" worktree="$2"
+    local own_names; own_names="$(wtd_service_names "$worktree" 2>/dev/null || true)"
+    wtd_backend_cap_ok "$own_names" || return 1
+    _wtd_run_stack_cmd "$stack_cmd" "$worktree"
 }
 
-# Run a stack bring-up command ($1) for a worktree ($2). Route through the
-# host-global start lock (in a subshell so the lock's signal traps don't leak
-# into the caller) with an in-lock cap re-check when EITHER serialization is on
-# OR a backend cap is configured — the cap needs the lock to be atomic, since two
+# Run a stack bring-up command for a worktree. Route through the host-global
+# start lock (in a subshell so the lock's signal traps don't leak into the
+# caller), with an in-lock cap re-check, when EITHER serialization is on OR a
+# backend cap is configured — the cap needs the lock to be atomic, since two
 # unserialized starts could otherwise both pass the pre-lock check and exceed it.
 # Otherwise run directly.
-_wtd_serialized_stack_cmd() {
-    local cmd="$1" path="$2"
+_wtd_run_stack_cmd_guarded() {
+    local stack_cmd="$1" worktree="$2"
     if { _wtd_serialize_stack_start || _wtd_cap_enabled; } \
         && declare -F wtd_stack_start_lock_run >/dev/null 2>&1; then
-        ( wtd_stack_start_lock_run _wtd_capped_run_stack_cmd "$path" "$cmd" "$path" )
+        ( wtd_stack_start_lock_run _wtd_run_stack_cmd_with_cap "$stack_cmd" "$worktree" )
     else
-        _wtd_run_stack_cmd "$cmd" "$path"
+        _wtd_run_stack_cmd "$stack_cmd" "$worktree"
     fi
 }
 
-wtd_stack_start() { _wtd_serialized_stack_cmd "$WTD_STACK_START" "$1"; }
+wtd_stack_start() { _wtd_run_stack_cmd_guarded "$WTD_STACK_START" "$1"; }
 wtd_stack_stop()  { _wtd_run_stack_cmd "$WTD_STACK_STOP" "$1"; }
 wtd_stack_restart() {
     if [[ -n "$WTD_STACK_RESTART" ]]; then
         # A configured restart can bring the stack up too, so route it through the
         # same serialized lock — otherwise a start + a custom restart could run two
         # bring-ups concurrently, defeating WTD_SERIALIZE_STACK_START.
-        _wtd_serialized_stack_cmd "$WTD_STACK_RESTART" "$1"
+        _wtd_run_stack_cmd_guarded "$WTD_STACK_RESTART" "$1"
     else
         wtd_stack_stop "$1"; wtd_stack_start "$1"
     fi
