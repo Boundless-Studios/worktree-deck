@@ -259,13 +259,21 @@ wtd_stack_restart() {
 # True when a dev stack is configured at all.
 wtd_has_stack() { [[ ${#WTD_SERVICE_TEMPLATES[@]} -gt 0 || -n "$WTD_STACK_START" ]]; }
 
-# Static base of the primary service template (first WTD_SERVICE_TEMPLATES entry
-# with the {suffix} placeholder removed), e.g. "myapp-backend". Empty when no
-# templates are configured. Used by the concurrent-stack cap.
-_wtd_primary_service_base() {
+# Docker `--filter name=…` regex (RE2, anchored) matching the primary service's
+# containers, derived from the first WTD_SERVICE_TEMPLATES entry. {suffix} may sit
+# anywhere in the template — at the end ("myapp-backend{suffix}" → ^myapp-backend.*$)
+# or in the middle ("myapp{suffix}-backend" → ^myapp.*-backend$) — and the anchors
+# keep it from matching unrelated containers that merely contain the base text.
+# Empty when no templates are configured. Used by the concurrent-stack cap.
+_wtd_primary_service_filter() {
     [[ ${#WTD_SERVICE_TEMPLATES[@]} -gt 0 ]] || return 0
-    local base="${WTD_SERVICE_TEMPLATES[0]}"
-    printf '%s' "${base//\{suffix\}/}"
+    local tmpl="${WTD_SERVICE_TEMPLATES[0]}"
+    if [[ "$tmpl" != *'{suffix}'* ]]; then
+        printf '^%s$' "$tmpl"
+        return 0
+    fi
+    local before="${tmpl%%\{suffix\}*}" after="${tmpl#*\{suffix\}}"
+    printf '^%s.*%s$' "$before" "$after"
 }
 
 # Cap guard: return non-zero (and explain) when starting another stack would
@@ -278,16 +286,16 @@ wtd_backend_cap_ok() {
     local cap="${WTD_BACKEND_CAP:-0}"
     [[ "$cap" =~ ^[0-9]+$ ]] || cap=0
     [[ "$cap" -gt 0 ]] || return 0
-    local base; base="$(_wtd_primary_service_base)"
-    [[ -n "$base" ]] || return 0
+    local filter; filter="$(_wtd_primary_service_filter)"
+    [[ -n "$filter" ]] || return 0
     command -v docker >/dev/null 2>&1 || return 0
 
     local own="${1:-}" running count
-    # Docker's `name` filter is an unanchored substring/regex match, so a generic
-    # base like "api"/"backend" would also count unrelated containers that merely
-    # CONTAIN it (e.g. "other-backend-x"). Anchor to the start (^base) so the cap
-    # only reflects THIS project's stack containers (named "<base><suffix>").
-    running="$(docker ps --filter "name=^${base}" --filter 'status=running' --format '{{.Names}}' 2>/dev/null | grep -v '^$' || true)"
+    # The fully-anchored regex from _wtd_primary_service_filter keeps the count to
+    # THIS project's primary-service containers — Docker's `name` filter is an
+    # unanchored substring match otherwise, so a generic base ("api"/"backend")
+    # would also count unrelated containers that merely contain it.
+    running="$(docker ps --filter "name=${filter}" --filter 'status=running' --format '{{.Names}}' 2>/dev/null | grep -v '^$' || true)"
     # Exclude ALL of this worktree's own container names (not just the first), so
     # restarting an already-running renamed/.env-named stack isn't blocked by its
     # own running container being miscounted as another worktree's.

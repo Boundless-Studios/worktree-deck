@@ -261,6 +261,15 @@ wtd_stack_start_lock_health() {
             printf 'stack-start lock became live (pid %s) during repair; left intact.\n' "$live_pid" >&2
             return 1
         fi
+        # Empty pidfile under the mutex: a waiter may have just reclaimed the dir and
+        # a NEW owner could be mid-acquisition (created the dir, not yet written pid).
+        # Only delete if it's old enough to be genuinely stale (same grace the waiter
+        # uses), else a brand-new live lock would be wiped and starts could overlap.
+        if [[ -z "$live_pid" ]] && ! _wtd_lock_path_old_enough "$lock_dir" "$grace"; then
+            rm -rf "$reclaim_dir" 2>/dev/null || true
+            printf 'stack-start lock is mid-acquisition (no pid yet); not repairing.\n' >&2
+            return 1
+        fi
         local removed=1
         if rm -rf "$lock_dir" 2>/dev/null && [[ ! -e "$lock_dir" ]]; then
             printf 'removed stale stack-start lock: %s (%s)\n' "$lock_dir" "$reason"

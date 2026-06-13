@@ -26,7 +26,7 @@ _wtd_resolve_worktree_path() {
             "branch "*)   branch="${line#branch }"; branch="${branch#refs/heads/}" ;;
             "")           if _match; then printf '%s\n' "$path"; return 0; fi; path=""; branch="" ;;
         esac
-    done < <(git worktree list --porcelain 2>/dev/null)
+    done < <(git -C "${WTD_MAIN_REPO:-$PWD}" worktree list --porcelain 2>/dev/null)
     if _match; then printf '%s\n' "$path"; return 0; fi
     return 1
 }
@@ -73,11 +73,23 @@ wtd_continue_worktree() {
         return 1
     fi
 
-    local fetch_remote="origin"
-    [[ "$base" == */* ]] && fetch_remote="${base%%/*}"
+    # Decide whether to fetch: the base may be a remote-tracking ref
+    # (origin/main → fetch origin) OR a local ref, including one that contains a
+    # slash (feature/base → no remote, skip fetch). Only fetch when the base's
+    # leading segment is an actual configured remote.
+    local fetch_remote=""
+    if [[ "$base" == */* ]]; then
+        local base_prefix="${base%%/*}"
+        if git -C "$worktree_path" remote | grep -qxF "$base_prefix"; then
+            fetch_remote="$base_prefix"
+        fi
+    fi
 
-    local current_branch
+    # Record where the user started so a failed switch can put them back — both
+    # the branch name (if on one) and the raw HEAD (for a detached worktree).
+    local current_branch original_head
     current_branch="$(git -C "$worktree_path" branch --show-current 2>/dev/null || echo "")"
+    original_head="$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")"
     echo "🔄 Worktree continuation"
     echo "   Worktree:   $worktree_path"
     echo "   Current:    ${current_branch:-detached}"
@@ -87,10 +99,14 @@ wtd_continue_worktree() {
     # Checked (not bare): this function must not rely on the caller's `set -e`,
     # so it stays correct when invoked from the TUI menu inside an `if`/`||`
     # context (where errexit is suppressed for the whole call).
-    echo "⟳ Fetching from ${fetch_remote}..."
-    if ! git -C "$worktree_path" fetch "$fetch_remote" --prune; then
-        echo "❌ Could not fetch from ${fetch_remote}; aborting." >&2
-        return 1
+    if [[ -n "$fetch_remote" ]]; then
+        echo "⟳ Fetching from ${fetch_remote}..."
+        if ! git -C "$worktree_path" fetch "$fetch_remote" --prune; then
+            echo "❌ Could not fetch from ${fetch_remote}; aborting." >&2
+            return 1
+        fi
+    else
+        echo "⟳ Base '$base' is a local ref; skipping fetch."
     fi
 
     local stashed=0 stash_sha=""
@@ -98,13 +114,16 @@ wtd_continue_worktree() {
         || ! git -C "$worktree_path" diff --cached --quiet \
         || [[ -n "$(git -C "$worktree_path" ls-files --others --exclude-standard)" ]]; then
         echo "⚠️  Stashing local changes (including untracked)..."
-        if ! git -C "$worktree_path" stash push -u -m "continue-worktree: auto-stash before branch switch"; then
+        # Tag the stash uniquely, then look OUR exact entry up by that tag. refs/stash
+        # is shared across a repo's worktrees, so reading `stash@{0}` right after the
+        # push can capture a sibling worktree's stash if it pushed in the same window.
+        local stash_tag; stash_tag="continue-worktree-$$-${EPOCHSECONDS:-$(date +%s)}-${RANDOM}"
+        if ! git -C "$worktree_path" stash push -u -m "$stash_tag"; then
             echo "❌ Could not stash local changes; aborting." >&2
             return 1
         fi
-        # Capture OUR stash's commit sha so we restore exactly it later, even if a
-        # sibling worktree pushes another stash onto the shared ref meanwhile.
-        stash_sha="$(git -C "$worktree_path" rev-parse -q --verify 'stash@{0}' 2>/dev/null || echo "")"
+        stash_sha="$(git -C "$worktree_path" stash list --format='%H %gs' 2>/dev/null \
+            | awk -v t="$stash_tag" 'index($0,t){print $1; exit}')"
         stashed=1
     fi
 
@@ -123,15 +142,17 @@ wtd_continue_worktree() {
     if [[ "$switch_ok" -ne 1 ]]; then
         echo "❌ Could not switch to '$new_branch' (base $base)." >&2
         git -C "$worktree_path" rebase --abort 2>/dev/null || true
-        # An existing-branch checkout may have already moved us off the user's
-        # original branch before the rebase failed — return there before
-        # restoring edits, so the stash doesn't reapply onto the wrong branch.
-        if [[ -n "$current_branch" ]]; then
-            git -C "$worktree_path" checkout "$current_branch" 2>/dev/null \
-                || echo "⚠️  Could not return to '$current_branch' — currently detached/elsewhere." >&2
+        # An existing-branch checkout may have already moved us off where the user
+        # started before the rebase failed — return there before restoring edits,
+        # so the stash doesn't reapply onto the wrong branch. Restore the original
+        # branch if they were on one, else the original (detached) HEAD.
+        local restore_target="${current_branch:-$original_head}"
+        if [[ -n "$restore_target" ]]; then
+            git -C "$worktree_path" checkout "$restore_target" 2>/dev/null \
+                || echo "⚠️  Could not return to '${restore_target}' — left where the switch failed." >&2
         fi
         if [[ "$stashed" -eq 1 ]]; then
-            echo "↩️  Restoring your auto-stashed changes onto '${current_branch:-the original branch}'..." >&2
+            echo "↩️  Restoring your auto-stashed changes onto '${current_branch:-the original commit}'..." >&2
             _wtd_stash_pop_ref "$worktree_path" "$stash_sha" \
                 || echo "⚠️  Could not auto-restore the stash — your changes are safe; see 'git stash list'." >&2
         fi
