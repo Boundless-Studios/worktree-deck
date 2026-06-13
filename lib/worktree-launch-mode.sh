@@ -55,3 +55,22 @@ wtd_launch_label_from_flag() {
             ;;
     esac
 }
+
+# Resume arguments for an agent CLI: the flags that continue that CLI's most
+# recent session in the current directory. Consumed by the console's resume
+# action (`<n>r`). Empty output means "no known way to resume this CLI" — the
+# caller then launches it fresh. Override in worktree-deck.conf to support other
+# launchers or custom resume flags.
+wtd_resume_args_from_cli() {
+    case "${1:-}" in
+        claude)
+            printf '%s\n' "--continue"
+            ;;
+        codex)
+            printf '%s\n' "resume --last"
+            ;;
+        *)
+            printf '%s\n' ""
+            ;;
+    esac
+}

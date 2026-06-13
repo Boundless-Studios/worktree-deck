@@ -1475,11 +1475,59 @@ launch_cli_inline() {
     local path="$1"
     local cli_command="$2"
     local label="$3"
+    shift 3
+    # Remaining args are forwarded verbatim to the CLI (e.g. resume flags). No
+    # extra args == a normal fresh launch, so existing callers are unaffected.
+    local extra_args="$*"
     local launch_flag
     launch_flag="$(wtd_normalize_launch_flag "$cli_command")"
 
     echo -e "${BLUE}Launching ${label}...${NC}"
-    bash "$LIB_DIR/launch-worktree-cli.sh" "$path" "$launch_flag"
+    bash "$LIB_DIR/launch-worktree-cli.sh" "$path" "$launch_flag" "$extra_args"
+}
+
+# Print the agent CLI (e.g. claude|codex) of the most-recent session in a
+# worktree via the optional WTD_LAST_AGENT_CMD hook. Empty when the hook is
+# unconfigured or reports nothing.
+wtd_last_agent_cli() {
+    local path="$1"
+    [[ -n "${WTD_LAST_AGENT_CMD:-}" ]] || return 0
+    # shellcheck disable=SC2086
+    ${WTD_LAST_AGENT_CMD} "$path" 2>/dev/null
+}
+
+# Resume the most-recent agent session for a worktree. Picks which CLI to resume
+# from WTD_LAST_AGENT_CMD (falling back to the worktree's default launcher when
+# unknown), then relaunches it with that CLI's resume args. If the CLI has no
+# known resume args, launches it fresh.
+# Args: path fallback_cli fallback_label
+resume_worktree_agent() {
+    local path="$1"
+    local fallback_cli="$2"
+    local fallback_label="$3"
+    local name
+    name=$(short_name "$path")
+
+    local cli label
+    cli="$(wtd_last_agent_cli "$path")"
+    if [[ -z "$cli" ]]; then
+        cli="$fallback_cli"
+        label="$fallback_label"
+        echo -e "${YELLOW}No recorded agent for ${name} — resuming default ${label}.${NC}"
+    else
+        label="$(wtd_launch_label_from_flag "$cli")"
+    fi
+
+    local resume_args
+    resume_args="$(wtd_resume_args_from_cli "$cli")"
+    if [[ -z "$resume_args" ]]; then
+        echo -e "${YELLOW}No resume flags known for '${cli}' — launching ${label} fresh.${NC}"
+        launch_cli_inline "$path" "$cli" "$label"
+        return
+    fi
+
+    echo -e "${BLUE}Resuming ${label} (most recent) in ${name}...${NC}"
+    launch_cli_inline "$path" "$cli" "$label" "$resume_args"
 }
 
 # Open frontend in browser. Always uses http://localhost:<port> — Auth0 refuses
@@ -1629,7 +1677,7 @@ main_menu() {
         echo -e "  ${CYAN}[C]${NC}onfig   Edit per-user console settings (toggle daemons)"
         echo -e "  ${CYAN}[q]${NC}uit     Exit"
         echo
-        echo -e "  ${CYAN}[#cmd]${NC}     Quick command (e.g. ${CYAN}7d${NC}=select 7+delete, ${CYAN}7dy${NC}=delete+confirm)"
+        echo -e "  ${CYAN}[#cmd]${NC}     Quick command (e.g. ${CYAN}1r${NC}=resume agent, ${CYAN}7d${NC}=delete, ${CYAN}7dy${NC}=delete+confirm)"
         echo
         read -p "Choice: " choice
 
@@ -1739,7 +1787,8 @@ worktree_menu() {
         echo -e "${BOLD}Actions:${NC}"
         echo -e "  ${GREEN}[s]${NC}tart   Start containers"
         echo -e "  ${YELLOW}[x]${NC}stop   Stop containers"
-        echo -e "  ${YELLOW}[r]${NC}estart Rebuild containers (stop/start)"
+        echo -e "  ${YELLOW}[R]${NC}estart Rebuild containers (stop/start)"
+        echo -e "  ${BLUE}[r]${NC}esume  Resume last agent (claude/codex)"
         echo -e "  ${BLUE}[f]${NC}ront   Open frontend in browser"
         echo -e "  ${BLUE}[l]${NC}ogs    Show backend logs"
         echo -e "  ${BLUE}[t]${NC}erm    Open terminal here"
@@ -1776,10 +1825,13 @@ worktree_menu() {
                 stop_worktree "$path"
                 read -p "Press Enter to continue..."
                 ;;
-            r|R|restart)
+            R|restart)
                 # `|| true`: see [s]tart — a cap refusal must not exit the TUI.
                 restart_worktree "$path" || true
                 read -p "Press Enter to continue..."
+                ;;
+            r|resume)
+                resume_worktree_agent "$path" "$preferred_cli" "$preferred_label"
                 ;;
             f|F|front)
                 open_frontend "$path"

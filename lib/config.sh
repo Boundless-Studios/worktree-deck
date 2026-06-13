@@ -116,6 +116,12 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # stack-start command instead). e.g. "bash scripts/worktree-env.sh".
 : "${WTD_ENV_REGEN_CMD:=}"
 
+# Optional: a command that, given a worktree path as its final argument, prints
+# the agent CLI (e.g. "claude" or "codex") of the MOST RECENT session in that
+# worktree — used by the resume action (`<n>r`) to relaunch the right agent.
+# Empty => resume falls back to the worktree's default launcher.
+: "${WTD_LAST_AGENT_CMD:=}"
+
 # ---------------------------------------------------------------------------
 # Config file loading
 # ---------------------------------------------------------------------------
