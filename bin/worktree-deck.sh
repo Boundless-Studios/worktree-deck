@@ -4,6 +4,28 @@
 #   name - optional worktree name (short or full branch) to jump directly to
 set -euo pipefail
 
+# --- Explicit subcommands (MUST precede the non-interactive `wc` guard) ---
+# These are named verbs (never single-dash flags), so they can't collide with
+# `printf ... | wc -l`. They run headless (agents/CI), so they must dispatch
+# before the guard that would otherwise delegate to coreutils `wc`.
+case "${1:-}" in
+    lock-health|continue|continue-worktree)
+        _WTD_SUBCMD="$1"; shift
+        _WTD_SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        _WTD_LD="$(cd "${_WTD_SD}/../lib" && pwd)"
+        # shellcheck source=../lib/config.sh
+        source "${_WTD_LD}/config.sh"
+        _WTD_MAIN_REPO="${WTD_MAIN_REPO:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)}"
+        wtd_load_config "$_WTD_MAIN_REPO"
+        case "$_WTD_SUBCMD" in
+            lock-health)
+                wtd_stack_start_lock_health "$@"; exit $? ;;
+            continue|continue-worktree)
+                wtd_continue_worktree "$@"; exit $? ;;
+        esac
+        ;;
+esac
+
 # --- Non-interactive guard (MUST be first, before any source or arg-parsing) ---
 # When not running in an interactive terminal (piped, redirected, agent, or CI),
 # delegate transparently to the real coreutils `wc` so that the shell alias
@@ -633,12 +655,27 @@ list_worktrees() {
 }
 
 # Start the dev stack for a worktree (config-driven; no-op when stackless).
+# Handles its own expected outcomes (no stack / cap refusal / start failure) and
+# always returns 0 — so the TUI can call it WITHOUT an `|| true` wrapper, which
+# would otherwise suppress errexit for the whole function and print "✓ Started!"
+# even when the start actually failed.
 start_worktree() {
     local path="$1"
-    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured (set WTD_STACK_START).${NC}"; return; fi
+    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured (set WTD_STACK_START).${NC}"; return 0; fi
+    # Concurrent-stack cap (no-op unless WTD_BACKEND_CAP is set). Exclude ALL of
+    # this worktree's own container names (template- AND .env-derived) so a
+    # restart of an already-counted stack isn't blocked by its own presence.
+    local own; own="$(wtd_service_names "$path" 2>/dev/null)"
+    if ! wtd_backend_cap_ok "$own"; then
+        return 0  # refusal already explained by wtd_backend_cap_ok; handled, not a crash
+    fi
     echo -e "${BLUE}Starting stack for ${BOLD}$(basename "$path")${NC}..."
-    wtd_stack_start "$path"
-    echo -e "${GREEN}✓ Started!${NC}"
+    if wtd_stack_start "$path"; then
+        echo -e "${GREEN}✓ Started!${NC}"
+    else
+        echo -e "${RED}✗ Start failed (see output above).${NC}"
+    fi
+    return 0
 }
 
 # Stop the dev stack for a worktree.
@@ -650,13 +687,26 @@ stop_worktree() {
     echo -e "${GREEN}✓ Stopped!${NC}"
 }
 
-# Restart the dev stack for a worktree.
+# Restart the dev stack for a worktree. Like start_worktree, handles its own
+# outcomes and always returns 0 (no `|| true` needed at the call site).
 restart_worktree() {
     local path="$1"
-    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured.${NC}"; return; fi
+    if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured.${NC}"; return 0; fi
+    # Restart can START a stopped stack (directly via wtd_stack_restart), so it
+    # must honour WTD_BACKEND_CAP just like start_worktree. Exclude ALL of this
+    # worktree's own container names so restarting an already-running stack isn't
+    # blocked by itself.
+    local own; own="$(wtd_service_names "$path" 2>/dev/null)"
+    if ! wtd_backend_cap_ok "$own"; then
+        return 0  # refusal already explained; handled, not a crash
+    fi
     echo -e "${YELLOW}Restarting stack for ${BOLD}$(basename "$path")${NC}..."
-    wtd_stack_restart "$path"
-    echo -e "${GREEN}✓ Restarted!${NC}"
+    if wtd_stack_restart "$path"; then
+        echo -e "${GREEN}✓ Restarted!${NC}"
+    else
+        echo -e "${RED}✗ Restart failed (see output above).${NC}"
+    fi
+    return 0
 }
 
 # Create a new worktree
@@ -1760,6 +1810,7 @@ worktree_menu() {
         echo -e "  ${BLUE}[c]${NC}laude  Launch Claude Code"
         echo -e "  ${BLUE}[e]${NC}codex  Launch Codex CLI"
         echo -e "  ${GREEN}[E]${NC}2e     Run e2e tests (Playwright)"
+        echo -e "  ${BLUE}[n]${NC}ext    Continue on a new branch (after PR merge)"
         echo -e "  ${RED}[d]${NC}elete  Remove worktree"
         echo -e "  ${NC}[b]${NC}ack    Back to list"
         echo
@@ -1777,6 +1828,8 @@ worktree_menu() {
                 return
                 ;;
             s|S|start)
+                # start_worktree handles its own outcomes and returns 0, so no
+                # `|| true` (which would suppress errexit inside it) is needed.
                 start_worktree "$path"
                 read -p "Press Enter to continue..."
                 ;;
@@ -1785,6 +1838,7 @@ worktree_menu() {
                 read -p "Press Enter to continue..."
                 ;;
             R|restart)
+                # restart_worktree handles its own outcomes and returns 0.
                 restart_worktree "$path"
                 read -p "Press Enter to continue..."
                 ;;
@@ -1816,6 +1870,22 @@ worktree_menu() {
                 ;;
             E|e2e)
                 run_e2e_tests "$path" "$pre_extra"
+                read -p "Press Enter to continue..."
+                ;;
+            n|N|next|continue)
+                local nb base
+                read -p "New branch name: " nb
+                if [[ -n "$nb" ]]; then
+                    read -p "Base [origin/main]: " base
+                    # wtd_continue_worktree is self-contained (checks its own git
+                    # steps, doesn't rely on caller errexit), so an `if` here can't
+                    # mask an internal failure as success — it just reports outcome.
+                    if ! wtd_continue_worktree "$path" "$nb" "${base:-origin/main}"; then
+                        echo -e "${YELLOW}Continue did not complete cleanly (see above).${NC}"
+                    fi
+                else
+                    echo -e "${YELLOW}Cancelled (no branch name).${NC}"
+                fi
                 read -p "Press Enter to continue..."
                 ;;
             d|D|delete)
