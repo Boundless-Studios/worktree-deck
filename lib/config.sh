@@ -236,9 +236,11 @@ _wtd_primary_service_base() {
 }
 
 # Cap guard: return non-zero (and explain) when starting another stack would
-# exceed WTD_BACKEND_CAP. $1 = this worktree's own primary container name to
-# exclude from the count (optional). No-op when the cap is unset/0 or no
-# templates/Docker are configured.
+# exceed WTD_BACKEND_CAP. $1 = this worktree's own container name(s) to exclude
+# from the count (optional; may be a NEWLINE-SEPARATED list — pass every name a
+# worktree can run, since WTD_ENV_CONTAINER_KEYS worktrees expose both the
+# template-derived name and the actual .env names). No-op when the cap is
+# unset/0 or no templates/Docker are configured.
 wtd_backend_cap_ok() {
     local cap="${WTD_BACKEND_CAP:-0}"
     [[ "$cap" =~ ^[0-9]+$ ]] || cap=0
@@ -253,8 +255,13 @@ wtd_backend_cap_ok() {
     # CONTAIN it (e.g. "other-backend-x"). Anchor to the start (^base) so the cap
     # only reflects THIS project's stack containers (named "<base><suffix>").
     running="$(docker ps --filter "name=^${base}" --filter 'status=running' --format '{{.Names}}' 2>/dev/null | grep -v '^$' || true)"
-    if [[ -n "$own" ]]; then
-        running="$(printf '%s\n' "$running" | grep -vxF "$own" || true)"
+    # Exclude ALL of this worktree's own container names (not just the first), so
+    # restarting an already-running renamed/.env-named stack isn't blocked by its
+    # own running container being miscounted as another worktree's.
+    local own_names
+    own_names="$(printf '%s\n' "$own" | grep -v '^$' || true)"
+    if [[ -n "$own_names" ]]; then
+        running="$(printf '%s\n' "$running" | grep -vxF -f <(printf '%s\n' "$own_names") || true)"
     fi
     count="$(printf '%s\n' "$running" | grep -c . || true)"
     if [[ "$count" -ge "$cap" ]]; then

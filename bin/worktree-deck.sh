@@ -658,10 +658,10 @@ list_worktrees() {
 start_worktree() {
     local path="$1"
     if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured (set WTD_STACK_START).${NC}"; return; fi
-    # Concurrent-stack cap (no-op unless WTD_BACKEND_CAP is set). Exclude this
-    # worktree's own primary container so a restart of an already-counted stack
-    # isn't blocked by its own presence.
-    local own; own="$(wtd_service_names "$path" 2>/dev/null | head -1)"
+    # Concurrent-stack cap (no-op unless WTD_BACKEND_CAP is set). Exclude ALL of
+    # this worktree's own container names (template- AND .env-derived) so a
+    # restart of an already-counted stack isn't blocked by its own presence.
+    local own; own="$(wtd_service_names "$path" 2>/dev/null)"
     if ! wtd_backend_cap_ok "$own"; then
         return 1
     fi
@@ -684,9 +684,10 @@ restart_worktree() {
     local path="$1"
     if ! wtd_has_stack; then echo -e "${YELLOW}No dev stack configured.${NC}"; return; fi
     # Restart can START a stopped stack (directly via wtd_stack_restart), so it
-    # must honour WTD_BACKEND_CAP just like start_worktree. Exclude this worktree's
-    # own container so restarting an already-running stack isn't blocked by itself.
-    local own; own="$(wtd_service_names "$path" 2>/dev/null | head -1)"
+    # must honour WTD_BACKEND_CAP just like start_worktree. Exclude ALL of this
+    # worktree's own container names so restarting an already-running stack isn't
+    # blocked by itself.
+    local own; own="$(wtd_service_names "$path" 2>/dev/null)"
     if ! wtd_backend_cap_ok "$own"; then
         return 1
     fi
@@ -1765,7 +1766,10 @@ worktree_menu() {
                 return
                 ;;
             s|S|start)
-                start_worktree "$path"
+                # `|| true`: an expected refusal (e.g. WTD_BACKEND_CAP full)
+                # returns non-zero; without this the script's `set -e` would exit
+                # the whole console instead of returning to the menu.
+                start_worktree "$path" || true
                 read -p "Press Enter to continue..."
                 ;;
             x|X|stop)
@@ -1773,7 +1777,8 @@ worktree_menu() {
                 read -p "Press Enter to continue..."
                 ;;
             r|R|restart)
-                restart_worktree "$path"
+                # `|| true`: see [s]tart — a cap refusal must not exit the TUI.
+                restart_worktree "$path" || true
                 read -p "Press Enter to continue..."
                 ;;
             f|F|front)
@@ -1808,7 +1813,9 @@ worktree_menu() {
                 read -p "New branch name: " nb
                 if [[ -n "$nb" ]]; then
                     read -p "Base [origin/main]: " base
-                    wtd_continue_worktree "$path" "$nb" "${base:-origin/main}"
+                    # `|| true`: an invalid name, fetch/rebase failure, or stash-pop
+                    # conflict returns non-zero; keep that from exiting the console.
+                    wtd_continue_worktree "$path" "$nb" "${base:-origin/main}" || true
                 else
                     echo -e "${YELLOW}Cancelled (no branch name).${NC}"
                 fi

@@ -82,13 +82,27 @@ wtd_continue_worktree() {
         stashed=1
     fi
 
+    # Branch switch. On ANY failure here we must not let `set -e` abort with the
+    # user's edits still hidden in the auto-stash — restore them (or point at the
+    # stash) and leave the worktree on a known branch.
+    local switch_ok=1
     if git -C "$worktree_path" show-ref --verify --quiet "refs/heads/$new_branch" 2>/dev/null; then
         echo "⚠️  Branch '$new_branch' exists locally — checking out and rebasing on $base..."
-        git -C "$worktree_path" checkout "$new_branch"
-        git -C "$worktree_path" rebase "$base"
+        git -C "$worktree_path" checkout "$new_branch" \
+            && git -C "$worktree_path" rebase "$base" || switch_ok=0
     else
         echo "✓ Creating branch '$new_branch' from $base..."
-        git -C "$worktree_path" checkout -b "$new_branch" "$base"
+        git -C "$worktree_path" checkout -b "$new_branch" "$base" || switch_ok=0
+    fi
+    if [[ "$switch_ok" -ne 1 ]]; then
+        echo "❌ Could not switch to '$new_branch' (base $base)." >&2
+        git -C "$worktree_path" rebase --abort 2>/dev/null || true
+        if [[ "$stashed" -eq 1 ]]; then
+            echo "↩️  Restoring your auto-stashed changes..." >&2
+            git -C "$worktree_path" stash pop \
+                || echo "⚠️  Could not auto-restore the stash — your changes are safe; see 'git stash list'." >&2
+        fi
+        return 1
     fi
 
     echo "✓ Pushing '$new_branch' with upstream tracking..."
