@@ -148,6 +148,15 @@ Three optional, config-gated behaviors help when several worktrees share a host:
   worktree-deck lock-health --repair   # clear it only if the holder is dead/stale
   ```
 
+  To serialize a start command you drive yourself (e.g. from a Makefile) under
+  that *same* lock — without routing it through the console's `wtd_stack_start` —
+  run it via `run-locked` (always serialized, regardless of
+  `WTD_SERIALIZE_STACK_START`); `lock-health` inspects the same lock:
+
+  ```bash
+  worktree-deck run-locked <command> [args...]   # e.g. run-locked make start-stack
+  ```
+
 - **Cap concurrent stacks.** Set `WTD_BACKEND_CAP=N` to refuse a start once `N`
   stacks are already running (counted from the first `WTD_SERVICE_TEMPLATES`
   entry). Protects a shared host from running out of RAM.

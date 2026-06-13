@@ -9,7 +9,7 @@ set -euo pipefail
 # `printf ... | wc -l`. They run headless (agents/CI), so they must dispatch
 # before the guard that would otherwise delegate to coreutils `wc`.
 case "${1:-}" in
-    lock-health|continue|continue-worktree)
+    lock-health|continue|continue-worktree|run-locked)
         _WTD_SUBCMD="$1"; shift
         _WTD_SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         _WTD_LD="$(cd "${_WTD_SD}/../lib" && pwd)"
@@ -22,6 +22,18 @@ case "${1:-}" in
                 wtd_stack_start_lock_health "$@"; exit $? ;;
             continue|continue-worktree)
                 wtd_continue_worktree "$@"; exit $? ;;
+            run-locked)
+                # Run an arbitrary command under the host-global stack-start lock,
+                # ALWAYS serialized (independent of WTD_SERIALIZE_STACK_START, which
+                # only gates the console's own wtd_stack_start). The headless
+                # equivalent of a serialized wtd_stack_start — for projects that
+                # drive their own start command (e.g. a Makefile) but want it
+                # serialized on the host. Inspect/repair the same lock with
+                # `worktree-deck lock-health`.
+                [[ $# -gt 0 ]] || { echo "usage: worktree-deck run-locked <command> [args...]" >&2; exit 2; }
+                # Subshell: wtd_stack_start_lock_run installs EXIT/signal traps and
+                # `set +e`; keep them from leaking into this dispatch shell.
+                ( wtd_stack_start_lock_run "$@" ); exit $? ;;
         esac
         ;;
 esac
