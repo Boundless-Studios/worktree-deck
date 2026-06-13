@@ -156,6 +156,14 @@ column — and nothing Docker-related.
   with its resume flags (`claude --continue` / `codex resume --last`). Which
   agent ran last comes from the optional `WTD_LAST_AGENT_CMD` hook; without it,
   resume uses the worktree's default launcher.
+- **Crash-resilient sessions** (`WTD_TMUX_RESUME`, on by default) — each agent
+  launch runs inside a per-worktree+CLI **tmux** session, so the CLI keeps
+  running on the tmux server if the terminal crashes, is quit, or an SSH
+  connection drops. Re-launching the worktree (or `<n>r`) reattaches to the
+  *same live process*, mid-task; only when no live session exists do the resume
+  flags relaunch the agent from its own history. `auto` uses iTerm2's native
+  control-mode integration (`tmux -CC`) under iTerm2 and plain tmux elsewhere;
+  set `cc`, `plain`, or `off` to override. Skipped without a TTY or tmux.
 - **Open** the frontend in a browser, the worktree in VS Code, or tail its
   container logs.
 - **Container hygiene** — remove dead/exited containers and sweep orphans, scoped

@@ -104,6 +104,22 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # Empty => resume falls back to the worktree's default launcher.
 : "${WTD_LAST_AGENT_CMD:=}"
 
+# Process-level crash resilience. Wrap each interactive agent launch in a
+# per-worktree+CLI tmux session, so the running CLI survives a terminal crash,
+# quit, or SSH drop — the process keeps running on the tmux server, and
+# re-launching the worktree reattaches to it (tmux `new-session -A`) instead of
+# starting a duplicate. Composes with the resume action (`<n>r`): a live session
+# is re-attached (true process-level resume); when none exists the resume flags
+# relaunch the agent from its own history. Modes:
+#   auto  (default) — tmux -CC (native iTerm2 integration) under iTerm2,
+#                     plain tmux under any other terminal
+#   cc              — force iTerm2 control-mode integration (-CC)
+#   plain           — force plain tmux
+#   off             — never wrap
+# Always skipped when tmux is absent, stdin/stdout is not a TTY (so headless /
+# piped launches keep raw stdout), or the launch is already inside tmux.
+: "${WTD_TMUX_RESUME:=auto}"
+
 # ---------------------------------------------------------------------------
 # Config file loading
 # ---------------------------------------------------------------------------
@@ -199,3 +215,13 @@ wtd_stack_restart() {
 
 # True when a dev stack is configured at all.
 wtd_has_stack() { [[ ${#WTD_SERVICE_TEMPLATES[@]} -gt 0 || -n "$WTD_STACK_START" ]]; }
+
+# tmux session name for a worktree+CLI, used by WTD_TMUX_RESUME. Must be STABLE
+# for a given worktree+CLI so a re-launch reattaches to the live session, and
+# tmux-safe (no '.' or ':'). Default: "wtd-<worktree-basename>-<cli>". Override
+# to change namespacing (e.g. add a project prefix if worktree basenames repeat
+# across projects on one machine).
+wtd_tmux_session_name() {
+    local worktree_path="$1" cli="$2"
+    printf '%s' "wtd-$(basename "$worktree_path")-${cli}" | tr -c 'A-Za-z0-9_-' '-'
+}

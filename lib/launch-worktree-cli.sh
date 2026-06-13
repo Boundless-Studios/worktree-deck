@@ -48,6 +48,39 @@ _emit_event() {
     ${WTD_EVENT_SINK} "$1" "$SESSION_ID" "$CLI_COMMAND" "$WORKTREE_PATH" "$$" "${2:-}" >/dev/null 2>&1 || true
 }
 
+# Process-level crash resilience (WTD_TMUX_RESUME): re-exec inside a stable
+# per-worktree+CLI tmux session so the agent survives a terminal crash, quit, or
+# SSH drop. `new-session -A` attaches when the session already exists, so a
+# re-launch (or the <n>r resume action) returns to the SAME live process instead
+# of starting a duplicate — and the resume flags ($3) are simply ignored on
+# attach. Skipped when disabled, tmux is absent, not a TTY (headless/piped
+# launches keep raw stdout), or already inside tmux ($TMUX — also the recursion
+# guard). WTD_SESSION_ID is threaded through so event correlation is stable.
+if [[ "${WTD_TMUX_RESUME:-auto}" != "off" \
+      && -z "${TMUX:-}" \
+      && -t 0 && -t 1 ]] \
+   && command -v tmux >/dev/null 2>&1; then
+    _wtd_tmux_mode="${WTD_TMUX_RESUME:-auto}"
+    if [[ "$_wtd_tmux_mode" == "auto" ]]; then
+        if [[ "${TERM_PROGRAM:-}" == "iTerm.app" ]]; then
+            _wtd_tmux_mode="cc"
+        else
+            _wtd_tmux_mode="plain"
+        fi
+    fi
+    _wtd_cc=()
+    [[ "$_wtd_tmux_mode" == "cc" ]] && _wtd_cc=(-CC)
+
+    _wtd_session="$(wtd_tmux_session_name "$WORKTREE_PATH" "$CLI_COMMAND")"
+    _wtd_relaunch="exec $(printf '%q' "${LIB_DIR}/launch-worktree-cli.sh")"
+    _wtd_relaunch+=" $(printf '%q' "$WORKTREE_PATH") $(printf '%q' "$LAUNCH_FLAG")"
+    [[ -n "$EXTRA_CLI_ARGS" ]] && _wtd_relaunch+=" $(printf '%q' "$EXTRA_CLI_ARGS")"
+
+    exec tmux "${_wtd_cc[@]}" new-session -A -s "$_wtd_session" -c "$WORKTREE_PATH" \
+        -e "WTD_SESSION_ID=$SESSION_ID" \
+        "$_wtd_relaunch"
+fi
+
 # Set the terminal title (best-effort; harmless if unsupported).
 printf '\033]0;%s — %s\007' "$(basename "$WORKTREE_PATH")" "$LABEL" 2>/dev/null || true
 
