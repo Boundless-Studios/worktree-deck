@@ -254,6 +254,11 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 # --- optional: bridge worktree session events to another tool ---
 # WTD_EVENT_SINK="agentic-pr-dash record"
 
+# --- optional: route the console's launch/resume actions through your own
+# launcher (same `<worktree_path> <launch_flag> [extra_args]` contract as the
+# built-in one), so the console and your other launch flows share ONE launcher ---
+# WTD_LAUNCH_CMD="bash scripts/launch-worktree-cli.sh"
+
 # --- optional: tell the resume action (<n>r) which agent last ran a worktree ---
 # Receives the worktree path as its final arg; prints "claude" or "codex".
 # Without this, resume just relaunches the worktree's default launcher.
