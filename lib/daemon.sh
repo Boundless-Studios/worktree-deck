@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
-# scripts/daemon.sh — Generic daemon manager for project-wide singleton processes.
+# Generic daemon manager for project-wide singleton processes declared in config.
 #
-# Usage (CLI):
-#   scripts/daemon.sh start-all           Start all registered daemons
-#   scripts/daemon.sh start-auto          Start only safe autostart daemons
-#   scripts/daemon.sh stop-all            Stop all registered daemons
-#   scripts/daemon.sh status              Show status of all daemons
-#   scripts/daemon.sh start <name>        Start a specific daemon
-#   scripts/daemon.sh stop <name>         Stop a specific daemon
-#   scripts/daemon.sh restart <name>      Restart a specific daemon
-#   scripts/daemon.sh logs <name> [N]     Show last N lines of log (default 20)
+# worktree-deck treats daemons as optional companions to the console: a project
+# config names them in WTD_DAEMONS and provides command/url/type/pattern maps.
+# This library owns pidfiles, logs, stale-process cleanup, and start/stop/status
+# behavior; the project owns the actual daemon command.
+#
+# Usage (CLI, via the console's daemon menu or a sourced wrapper):
+#   daemon.sh start-all           Start all registered daemons
+#   daemon.sh start-auto          Start only safe autostart daemons
+#   daemon.sh stop-all            Stop all registered daemons
+#   daemon.sh status              Show status of all daemons
+#   daemon.sh start <name>        Start a specific daemon
+#   daemon.sh stop <name>         Stop a specific daemon
+#   daemon.sh restart <name>      Restart a specific daemon
+#   daemon.sh logs <name> [N]     Show last N lines of log (default 20)
 #
 # Usage (sourced):
-#   source scripts/daemon.sh
+#   source lib/daemon.sh
 #   daemon_start pr-dashboard
 #   daemon_is_running pr-dashboard && echo "up"
 
