@@ -44,6 +44,19 @@ worktree #2 can't clobber worktree #3.
 runtimes, with one console to list, create, start, stop, inspect, and jump into
 any of them.
 
+## Mental model
+
+Think of every branch as its own desk: one folder, one optional running app
+stack, one set of ports, and one place where a coding agent can work.
+`worktree-deck` is the front desk. It shows all the desks and lets you start,
+stop, open, clean, or jump into them.
+
+It does not know how your app works. Your project supplies commands like
+`make start-worktree` and decides how ports, containers, databases, auth, and
+tests work. For example, Gaia is one downstream app repo that uses
+`worktree-deck`; Gaia owns its own Docker, database, and auth setup, while
+`worktree-deck` owns the generic multi-worktree control panel.
+
 ## The execution model: one Docker stack per worktree
 
 This is the core idea, and it's worth understanding before you configure
