@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Shared helpers for selecting which interactive coding CLI to launch from
 # worktree-deck launch-mode helpers.
+#
+# The console accepts user-facing selectors like --codex / --claude, stores one
+# default selector, and later needs concrete CLI names plus resume arguments.
+# Keep that translation here so the TUI, built-in launcher, and project
+# overrides share one small contract.
 
 wtd_default_launch_flag() {
     printf '%s\n' "${WTD_LAUNCH_FLAG:---codex}"
