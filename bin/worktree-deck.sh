@@ -1515,8 +1515,13 @@ launch_cli_inline() {
         # `new-wt` target) already shell out to a richer launcher can route the
         # console through that SAME launcher — one launcher, identical behavior on
         # both paths — instead of forking project-specific logic into the engine.
+        #
+        # Run from the target worktree in a subshell so a RELATIVE override (e.g.
+        # "bash scripts/launch-worktree-cli.sh") resolves against the project tree,
+        # not the TUI's cwd (which may be a subdirectory or, via WTD_MAIN_REPO,
+        # outside the repo entirely); the console's own cwd is left untouched.
         # shellcheck disable=SC2086
-        ${WTD_LAUNCH_CMD} "$path" "$launch_flag" "$extra_args"
+        ( cd "$path" && ${WTD_LAUNCH_CMD} "$path" "$launch_flag" "$extra_args" )
     else
         bash "$LIB_DIR/launch-worktree-cli.sh" "$path" "$launch_flag" "$extra_args"
     fi

@@ -103,6 +103,8 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # (same contract as the built-in lib/launch-worktree-cli.sh). Set this to a
 # project's own launcher so the console and the project's other launch flows run
 # ONE launcher with identical behavior. Empty => the built-in launcher.
+# Run with the target worktree as cwd, so a RELATIVE command (e.g.
+# "bash scripts/launch-worktree-cli.sh") resolves against the project tree.
 : "${WTD_LAUNCH_CMD:=}"
 
 # Optional: serialize stack-start host-globally (only one worktree's start runs
