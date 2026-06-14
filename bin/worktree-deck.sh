@@ -1520,8 +1520,17 @@ launch_cli_inline() {
         # "bash scripts/launch-worktree-cli.sh") resolves against the project tree,
         # not the TUI's cwd (which may be a subdirectory or, via WTD_MAIN_REPO,
         # outside the repo entirely); the console's own cwd is left untouched.
-        # shellcheck disable=SC2086
-        ( cd "$path" && ${WTD_LAUNCH_CMD} "$path" "$launch_flag" "$extra_args" )
+        #
+        # Pass [extra_args] ONLY when present (resume): the contract makes it
+        # optional, so a fresh launch must not hand the override an empty trailing
+        # argument that a `"$@"`-forwarding launcher would propagate to the CLI.
+        if [[ -n "$extra_args" ]]; then
+            # shellcheck disable=SC2086
+            ( cd "$path" && ${WTD_LAUNCH_CMD} "$path" "$launch_flag" "$extra_args" )
+        else
+            # shellcheck disable=SC2086
+            ( cd "$path" && ${WTD_LAUNCH_CMD} "$path" "$launch_flag" )
+        fi
     else
         bash "$LIB_DIR/launch-worktree-cli.sh" "$path" "$launch_flag" "$extra_args"
     fi
