@@ -1,28 +1,95 @@
 # worktree-deck Architecture
 
-This document is the maintainer map for `worktree-deck`. The README explains
-what the tool does for users; this file explains how the implementation is
-structured, where behavior belongs, and which contracts must stay stable for
-downstream repos such as Gaia.
+This document explains `worktree-deck` from the outside in. Start here if you
+need a mental model before reading the shell code.
 
-## Purpose
+## ELI5 Mental Model
 
-`worktree-deck` is a project-agnostic control panel for a repository's git
-worktrees and, optionally, one isolated dev stack per worktree. It owns the
-generic mechanics:
+Imagine every branch of your app gets its own little desk.
 
-- finding and displaying worktrees for a main repository;
-- creating, removing, continuing, and cleaning worktrees;
-- reading per-worktree runtime metadata from `.env`;
-- mapping each worktree to configured container names;
-- starting, stopping, and restarting a configured stack command;
-- selecting local versus remote Docker for status and cleanup;
-- launching or resuming a configured agent CLI inside a worktree;
-- running optional background daemons declared by configuration.
+Each desk has:
 
-It does not know how a specific application builds, assigns ports, authenticates,
-runs tests, or provisions shared infrastructure. Those are configuration or hook
-responsibilities.
+- a folder with that branch's files;
+- maybe a running backend/frontend/worker stack;
+- its own ports;
+- its own terminal or coding agent;
+- a PR that may or may not be open.
+
+`worktree-deck` is the front desk for all of those desks. It keeps a list of
+them, shows which ones are running, and gives you buttons to start, stop, open,
+clean up, or jump into one.
+
+It is not the app builder. It does not know what Gaia, Rails, Django, Vite, or
+Docker Compose need. It only knows: "when the user presses start for this desk,
+run the start command the project configured."
+
+The simplest responsibility split is:
+
+```text
+worktree-deck:
+  "Which worktrees exist, what state are they in, and which generic action
+   should happen next?"
+
+the project using it:
+  "How do I actually start my app, assign ports, authenticate, seed data,
+   run tests, or clean app-specific resources?"
+```
+
+For Gaia, that means `worktree-deck` owns the generic worktree console. Gaia owns
+`gmake start-worktree`, `.env` generation, Docker Compose policy, Auth0 local
+host assumptions, database policy, proof bundles, and Gaia-specific scripts.
+
+## One-Sentence Summary
+
+`worktree-deck` turns "many git worktrees" into "many visible, controllable dev
+environments" by combining git worktree discovery, configurable stack commands,
+Docker status reads, PR metadata, and agent launch hooks.
+
+## What It Owns
+
+`worktree-deck` owns generic mechanics:
+
+- find and display all worktrees for a main repository;
+- create, remove, continue, and clean worktrees;
+- read per-worktree runtime metadata from `.env`;
+- translate a worktree branch into expected container names;
+- show whether each worktree's stack appears to be running;
+- run configured start, stop, restart, and test commands;
+- select local or remote Docker for status and cleanup;
+- launch or resume a configured agent CLI inside a worktree;
+- manage optional background daemons declared by configuration.
+
+## What It Does Not Own
+
+`worktree-deck` does not own app-specific behavior:
+
+- no Docker Compose files;
+- no port-allocation algorithm;
+- no database migrations or seeds;
+- no Auth0 or browser-login policy;
+- no proof-bundle rules;
+- no issue-tracker workflow;
+- no Gaia-specific paths or Make targets in upstream code.
+
+Those behaviors belong in the consuming project and are exposed to
+`worktree-deck` through configuration.
+
+## How To Read The Code
+
+Read the code as a dispatcher around a config contract:
+
+1. `bin/worktree-deck.sh` draws the console and handles user choices.
+2. `lib/config.sh` loads defaults plus project config and defines the stable
+   `WTD_*` variables and `wtd_*` hook functions.
+3. Focused `lib/*.sh` files provide reusable capabilities: Docker reachability,
+   daemon management, launch mode handling, stack-start locking, branch
+   continuation, and name validation.
+
+Most confusing behavior becomes easier if you ask two questions:
+
+- Is this generic for any repo with worktrees? If yes, it probably belongs here.
+- Is this specific to how one app starts or validates itself? If yes, it belongs
+  in that app and should enter through config.
 
 ## Setup Model
 
@@ -45,7 +112,7 @@ Configuration is sourced shell. Load order is:
 Later files win. A config may set `WTD_*` variables and may override any
 `wtd_*` hook function.
 
-## Design Boundaries
+## Responsibility Boundaries
 
 The stable boundary is the `WTD_*`/`wtd_*` contract.
 
@@ -59,10 +126,12 @@ Application-specific behavior should enter through:
 - `WTD_DAEMONS` and the daemon registry maps;
 - hook overrides such as `wtd_branch_tag()` or `wtd_launch_cli_from_flag()`.
 
-Do not add repo-specific paths, Make targets, Docker Compose assumptions, Auth0
-logic, database rules, proof-bundle rules, or issue-tracker policy to this repo.
-If a downstream application needs that behavior, expose a generic command or hook
-and let its config invoke the application-specific implementation.
+The rule of thumb: upstream code should provide knobs, not opinions about one
+project.
+
+For example, `worktree-deck` can provide `WTD_STACK_START`. Gaia can set it to
+`gmake start-worktree`. `worktree-deck` should not hardcode `gmake`, Gaia
+container names, Gaia database setup, or Gaia proof rules.
 
 ## Runtime Flows
 
@@ -83,6 +152,9 @@ and let its config invoke the application-specific implementation.
 The render path avoids expensive repeated probes. It snapshots Docker container
 names once per screen, reads PR metadata once via `gh pr list`, and reuses those
 snapshots while building rows.
+
+In plain terms: every screen refresh asks git, Docker, `.env`, and GitHub for a
+small status snapshot, then turns those snapshots into the table you see.
 
 ### Worktree Status
 
