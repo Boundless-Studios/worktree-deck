@@ -9,7 +9,7 @@ set -euo pipefail
 # `printf ... | wc -l`. They run headless (agents/CI), so they must dispatch
 # before the guard that would otherwise delegate to coreutils `wc`.
 case "${1:-}" in
-    lock-health|continue|continue-worktree|run-locked|cap-check)
+    lock-health|continue|continue-worktree|run-locked)
         _WTD_SUBCMD="$1"; shift
         _WTD_SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         _WTD_LD="$(cd "${_WTD_SD}/../lib" && pwd)"
@@ -17,6 +17,14 @@ case "${1:-}" in
         source "${_WTD_LD}/config.sh"
         _WTD_MAIN_REPO="${WTD_MAIN_REPO:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)}"
         wtd_load_config "$_WTD_MAIN_REPO"
+        # Hand the configured remote daemon off to DOCKER_HOST (mirrors the
+        # interactive path below) so a cap check counts stacks on the SAME daemon
+        # the project starts them on — an explicit DOCKER_HOST in the env wins.
+        # Without this, `run-locked --cap` would count the local daemon and pass
+        # even when the configured remote is already at WTD_BACKEND_CAP.
+        if [[ -n "${WTD_REMOTE_DOCKER_HOST:-}" && -z "${DOCKER_HOST:-}" ]]; then
+            export DOCKER_HOST="$WTD_REMOTE_DOCKER_HOST"
+        fi
         case "$_WTD_SUBCMD" in
             lock-health)
                 wtd_stack_start_lock_health "$@"; exit $? ;;
@@ -30,22 +38,21 @@ case "${1:-}" in
                 # drive their own start command (e.g. a Makefile) but want it
                 # serialized on the host. Inspect/repair the same lock with
                 # `worktree-deck lock-health`.
-                [[ $# -gt 0 ]] || { echo "usage: worktree-deck run-locked <command> [args...]" >&2; exit 2; }
+                #
+                # With --cap, ALSO enforce WTD_BACKEND_CAP atomically: the cap
+                # count and the start run under ONE lock acquisition, so two
+                # concurrent capped starts can't both observe free capacity and
+                # then both start (the TOCTOU a separate pre-flight check would
+                # leave open). No-op cap when WTD_BACKEND_CAP is 0/unset.
+                _wtd_rl_cap=0
+                if [[ "${1:-}" == "--cap" ]]; then _wtd_rl_cap=1; shift; fi
+                [[ $# -gt 0 ]] || { echo "usage: worktree-deck run-locked [--cap] <command> [args...]" >&2; exit 2; }
                 # Subshell: wtd_stack_start_lock_run installs EXIT/signal traps and
                 # `set +e`; keep them from leaking into this dispatch shell.
+                if [[ "$_wtd_rl_cap" == "1" ]]; then
+                    ( wtd_stack_start_lock_run _wtd_run_capped_command "$@" ); exit $?
+                fi
                 ( wtd_stack_start_lock_run "$@" ); exit $? ;;
-            cap-check)
-                # Headless concurrent-stack cap check: exit non-zero if starting
-                # another stack would exceed WTD_BACKEND_CAP, excluding THIS
-                # worktree's own containers (so restarting an already-running
-                # worktree isn't counted against itself). The same cap the console
-                # enforces via wtd_stack_start — exposed for projects that drive
-                # their own start command (e.g. a Makefile). No-op pass when
-                # WTD_BACKEND_CAP is 0/unset. Optional arg: worktree path to check
-                # (default: cwd). Subshell scopes the locals at top level.
-                ( _wtd_cc_wt="${1:-$PWD}"
-                  _wtd_cc_own="$(wtd_service_names "$_wtd_cc_wt" 2>/dev/null || true)"
-                  wtd_backend_cap_ok "$_wtd_cc_own" ); exit $? ;;
         esac
         ;;
 esac

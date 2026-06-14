@@ -236,6 +236,17 @@ _wtd_run_stack_cmd_with_cap() {
     _wtd_run_stack_cmd "$stack_cmd" "$worktree"
 }
 
+# Cap-check then run an arbitrary command, for `worktree-deck run-locked --cap`.
+# Designed to run INSIDE wtd_stack_start_lock_run so the count and the start are
+# atomic under one lock acquisition (no separate-pre-flight TOCTOU). Excludes the
+# CWD worktree's own containers so restarting an already-running worktree isn't
+# self-counted. No-op cap when WTD_BACKEND_CAP is 0/unset.
+_wtd_run_capped_command() {
+    local own_names; own_names="$(wtd_service_names "$PWD" 2>/dev/null || true)"
+    wtd_backend_cap_ok "$own_names" || return 1
+    "$@"
+}
+
 # Run a stack bring-up command for a worktree. Route through the host-global
 # start lock (in a subshell so the lock's signal traps don't leak into the
 # caller), with an in-lock cap re-check, when EITHER serialization is on OR a

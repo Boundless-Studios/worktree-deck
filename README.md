@@ -173,13 +173,16 @@ Three optional, config-gated behaviors help when several worktrees share a host:
 - **Cap concurrent stacks.** Set `WTD_BACKEND_CAP=N` to refuse a start once `N`
   stacks are already running (counted from the first `WTD_SERVICE_TEMPLATES`
   entry). Protects a shared host from running out of RAM. The console enforces
-  this automatically; a project that drives its own start command can apply the
-  *same* cap headlessly with `cap-check` (exits non-zero when over cap; a no-op
-  pass when `WTD_BACKEND_CAP` is `0`/unset). It excludes the target worktree's
-  own containers, so restarting an already-running worktree isn't self-counted:
+  this automatically. A project that drives its own start command gets the
+  *same* enforcement by adding `--cap` to `run-locked`: the cap count and the
+  start happen **atomically under one lock**, so two concurrent starts can't both
+  see free capacity and then both start. No-op cap when `WTD_BACKEND_CAP` is
+  `0`/unset; the cwd worktree's own containers are excluded so a restart isn't
+  self-counted. The cap is counted on the configured `WTD_REMOTE_DOCKER_HOST`
+  when set (same daemon the stack starts on):
 
   ```bash
-  worktree-deck cap-check [worktree-path]   # default: cwd; e.g. in a Makefile prereq
+  worktree-deck run-locked --cap <start-command>   # e.g. run-locked --cap make start-stack
   ```
 
 - **Continue on a new branch.** After a PR merges and its branch is deleted, keep
