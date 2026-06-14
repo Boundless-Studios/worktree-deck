@@ -9,7 +9,7 @@ set -euo pipefail
 # `printf ... | wc -l`. They run headless (agents/CI), so they must dispatch
 # before the guard that would otherwise delegate to coreutils `wc`.
 case "${1:-}" in
-    lock-health|continue|continue-worktree|run-locked)
+    lock-health|continue|continue-worktree|run-locked|cap-check)
         _WTD_SUBCMD="$1"; shift
         _WTD_SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         _WTD_LD="$(cd "${_WTD_SD}/../lib" && pwd)"
@@ -34,6 +34,18 @@ case "${1:-}" in
                 # Subshell: wtd_stack_start_lock_run installs EXIT/signal traps and
                 # `set +e`; keep them from leaking into this dispatch shell.
                 ( wtd_stack_start_lock_run "$@" ); exit $? ;;
+            cap-check)
+                # Headless concurrent-stack cap check: exit non-zero if starting
+                # another stack would exceed WTD_BACKEND_CAP, excluding THIS
+                # worktree's own containers (so restarting an already-running
+                # worktree isn't counted against itself). The same cap the console
+                # enforces via wtd_stack_start — exposed for projects that drive
+                # their own start command (e.g. a Makefile). No-op pass when
+                # WTD_BACKEND_CAP is 0/unset. Optional arg: worktree path to check
+                # (default: cwd). Subshell scopes the locals at top level.
+                ( _wtd_cc_wt="${1:-$PWD}"
+                  _wtd_cc_own="$(wtd_service_names "$_wtd_cc_wt" 2>/dev/null || true)"
+                  wtd_backend_cap_ok "$_wtd_cc_own" ); exit $? ;;
         esac
         ;;
 esac
