@@ -35,7 +35,8 @@ the project using it:
    run tests, or clean app-specific resources?"
 ```
 
-For Gaia, that means `worktree-deck` owns the generic worktree console. Gaia owns
+For example, Gaia is a downstream application repo that uses `worktree-deck`.
+In Gaia, `worktree-deck` owns the generic worktree console. Gaia owns
 `gmake start-worktree`, `.env` generation, Docker Compose policy, Auth0 local
 host assumptions, database policy, proof bundles, and Gaia-specific scripts.
 
