@@ -242,7 +242,13 @@ _wtd_run_stack_cmd_with_cap() {
 # CWD worktree's own containers so restarting an already-running worktree isn't
 # self-counted. No-op cap when WTD_BACKEND_CAP is 0/unset.
 _wtd_run_capped_command() {
-    local own_names; own_names="$(wtd_service_names "$PWD" 2>/dev/null || true)"
+    # Resolve the worktree ROOT, not just $PWD: wtd_service_names reads
+    # "$root/.env" for WTD_ENV_CONTAINER_KEYS, so a `run-locked --cap` invoked
+    # from a subdir (e.g. src/) must still find the root .env to exclude its own
+    # already-running containers — otherwise a restart self-counts and is wrongly
+    # capped.
+    local root; root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+    local own_names; own_names="$(wtd_service_names "$root" 2>/dev/null || true)"
     wtd_backend_cap_ok "$own_names" || return 1
     "$@"
 }

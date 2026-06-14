@@ -17,14 +17,6 @@ case "${1:-}" in
         source "${_WTD_LD}/config.sh"
         _WTD_MAIN_REPO="${WTD_MAIN_REPO:-$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || pwd)}"
         wtd_load_config "$_WTD_MAIN_REPO"
-        # Hand the configured remote daemon off to DOCKER_HOST (mirrors the
-        # interactive path below) so a cap check counts stacks on the SAME daemon
-        # the project starts them on — an explicit DOCKER_HOST in the env wins.
-        # Without this, `run-locked --cap` would count the local daemon and pass
-        # even when the configured remote is already at WTD_BACKEND_CAP.
-        if [[ -n "${WTD_REMOTE_DOCKER_HOST:-}" && -z "${DOCKER_HOST:-}" ]]; then
-            export DOCKER_HOST="$WTD_REMOTE_DOCKER_HOST"
-        fi
         case "$_WTD_SUBCMD" in
             lock-health)
                 wtd_stack_start_lock_health "$@"; exit $? ;;
@@ -50,6 +42,14 @@ case "${1:-}" in
                 # Subshell: wtd_stack_start_lock_run installs EXIT/signal traps and
                 # `set +e`; keep them from leaking into this dispatch shell.
                 if [[ "$_wtd_rl_cap" == "1" ]]; then
+                    # The cap counts containers, so point DOCKER_HOST at the
+                    # configured remote daemon (the one the project starts stacks
+                    # on) before counting — an explicit DOCKER_HOST in the env
+                    # wins. Scoped to --cap so plain run-locked leaves the wrapped
+                    # command's own daemon resolution untouched.
+                    if [[ -n "${WTD_REMOTE_DOCKER_HOST:-}" && -z "${DOCKER_HOST:-}" ]]; then
+                        export DOCKER_HOST="$WTD_REMOTE_DOCKER_HOST"
+                    fi
                     ( wtd_stack_start_lock_run _wtd_run_capped_command "$@" ); exit $?
                 fi
                 ( wtd_stack_start_lock_run "$@" ); exit $? ;;

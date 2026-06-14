@@ -170,6 +170,13 @@ Three optional, config-gated behaviors help when several worktrees share a host:
   worktree-deck run-locked <command> [args...]   # e.g. run-locked make start-stack
   ```
 
+  While the lock is held, `WTD_STACK_START_LOCK_HELD` is exported (set to the
+  lock dir) into the command's environment. A project whose own start target
+  routes through `run-locked` should check it and run its impl **directly** when
+  set — otherwise a console start (which already holds this lock before invoking
+  `WTD_STACK_START`) would make the target wait on the non-reentrant lock it
+  already holds.
+
 - **Cap concurrent stacks.** Set `WTD_BACKEND_CAP=N` to refuse a start once `N`
   stacks are already running (counted from the first `WTD_SERVICE_TEMPLATES`
   entry). Protects a shared host from running out of RAM. The console enforces
