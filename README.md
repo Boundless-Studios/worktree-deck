@@ -204,6 +204,9 @@ column — and nothing Docker-related.
 - **Quick commands** — `7s` = select #7 + start, `1r` = resume #1's last agent,
   `7dy` = delete #7 + confirm.
 
+For maintainers, see [Architecture](docs/ARCHITECTURE.md) for the setup model,
+configuration contract, runtime flows, and code map.
+
 ## Install
 
 ```bash
