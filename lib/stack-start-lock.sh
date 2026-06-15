@@ -218,13 +218,6 @@ wtd_stack_start_lock_run() {
         waited=$((waited + 2))
     done
 
-    # Mark the environment so a command that itself shells out to a serialized
-    # start (e.g. a project Makefile whose start target routes through
-    # `run-locked`) can detect it is ALREADY inside this non-reentrant lock and
-    # run its impl directly instead of waiting on the lock it already holds. The
-    # marker lives only in this subshell's child tree; it does not leak to the
-    # caller. Value is the lock dir so nested code can tell which lock is held.
-    export WTD_STACK_START_LOCK_HELD="$lock_dir"
     "$@" &
     child_pid=$!
     wait "$child_pid"
