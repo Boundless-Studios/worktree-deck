@@ -131,6 +131,28 @@ wtd_stack_start_lock_run() {
     # spin to the timeout instead of acquiring.
     mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 
+    # Reentrancy: if an ANCESTOR of this process already holds the lock, we are
+    # nested inside it (e.g. the console takes this lock, then invokes a project
+    # start command that itself routes through `run-locked`). Re-acquiring a
+    # non-reentrant lock we already hold would wait on ourselves until timeout —
+    # so run the command directly, without acquiring or installing release traps
+    # (the owning ancestor releases it). The match is an ancestor pid equal to the
+    # live lock owner in $pidfile; a stale owner is never in our live chain, and a
+    # different worktree's start is in a different process tree, so neither matches.
+    local _held_pid _anc _depth=0
+    _held_pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if [[ "$_held_pid" =~ ^[0-9]+$ ]]; then
+        _anc="$self_pid"
+        while [[ "$_anc" =~ ^[0-9]+$ ]] && [[ "$_anc" -gt 1 ]] && [[ "$_depth" -lt 64 ]]; do
+            if [[ "$_anc" == "$_held_pid" ]]; then
+                "$@"
+                return $?
+            fi
+            _anc="$(ps -o ppid= -p "$_anc" 2>/dev/null | tr -d '[:space:]')"
+            _depth=$((_depth + 1))
+        done
+    fi
+
     _release() {
         local owner
         owner="$(cat "$reclaim_pid" 2>/dev/null || true)"

@@ -170,11 +170,12 @@ Three optional, config-gated behaviors help when several worktrees share a host:
   worktree-deck run-locked <command> [args...]   # e.g. run-locked make start-stack
   ```
 
-  The lock records its owner pid in `$WTD_STACK_START_LOCK/pid`. A project whose
-  own start target routes through `run-locked` and may be invoked from *inside*
-  the lock (e.g. the console already holds it before invoking `WTD_STACK_START`)
-  should detect that re-entry — an ancestor pid matching that pidfile — and run
-  its impl directly, rather than waiting on the non-reentrant lock it holds.
+  `run-locked` is **reentrant**: if an ancestor process already holds the lock
+  (e.g. the console takes it before invoking `WTD_STACK_START`, and that command
+  itself routes through `run-locked`), it runs the command directly instead of
+  waiting on the lock it already holds. So a project start target can route
+  through `run-locked` unconditionally — from the console or a plain shell —
+  without deadlocking on itself.
 
 - **Cap concurrent stacks.** Set `WTD_BACKEND_CAP=N` to refuse a start once `N`
   stacks are already running (counted from the first `WTD_SERVICE_TEMPLATES`
