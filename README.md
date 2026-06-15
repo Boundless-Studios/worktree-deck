@@ -44,6 +44,19 @@ worktree #2 can't clobber worktree #3.
 runtimes, with one console to list, create, start, stop, inspect, and jump into
 any of them.
 
+## Mental model
+
+Think of every branch as its own desk: one folder, one optional running app
+stack, one set of ports, and one place where a coding agent can work.
+`worktree-deck` is the front desk. It shows all the desks and lets you start,
+stop, open, clean, or jump into them.
+
+It does not know how your app works. Your project supplies commands like
+`make start-worktree` and decides how ports, containers, databases, auth, and
+tests work. For example, Gaia is one downstream app repo that uses
+`worktree-deck`; Gaia owns its own Docker, database, and auth setup, while
+`worktree-deck` owns the generic multi-worktree control panel.
+
 ## The execution model: one Docker stack per worktree
 
 This is the core idea, and it's worth understanding before you configure
@@ -132,6 +145,65 @@ Typically that command runs `docker compose up` with the worktree's `.env`
 (its slot, ports, and container names). `worktree-deck` orchestrates *which*
 worktree and *when*; your command owns the *how*.
 
+#### Serialized starts, a concurrency cap, and continue-worktree
+
+Three optional, config-gated behaviors help when several worktrees share a host:
+
+- **Serialize starts.** Set `WTD_SERIALIZE_STACK_START=1` and only one worktree's
+  start runs at a time. Useful when your start command touches *host-global*
+  resources (a shared file-sync session, a shared image builder, shared cleanup
+  sweeps) that two concurrent starts would trample. The lock is an advisory,
+  host-scoped `mkdir` lock with PID + process-start-token stale reclaim (no
+  `flock` needed, so it works on macOS). Diagnose or repair a stuck lock with:
+
+  ```bash
+  worktree-deck lock-health            # report holder + how long it's been held
+  worktree-deck lock-health --repair   # clear it only if the holder is dead/stale
+  ```
+
+  To serialize a start command you drive yourself (e.g. from a Makefile) under
+  that *same* lock — without routing it through the console's `wtd_stack_start` —
+  run it via `run-locked` (always serialized, regardless of
+  `WTD_SERIALIZE_STACK_START`); `lock-health` inspects the same lock:
+
+  ```bash
+  worktree-deck run-locked <command> [args...]   # e.g. run-locked make start-stack
+  ```
+
+  `run-locked` is **reentrant**: if an ancestor process already holds the lock
+  (e.g. the console takes it before invoking `WTD_STACK_START`, and that command
+  itself routes through `run-locked`), it runs the command directly instead of
+  waiting on the lock it already holds. So a project start target can route
+  through `run-locked` unconditionally — from the console or a plain shell —
+  without deadlocking on itself.
+
+- **Cap concurrent stacks.** Set `WTD_BACKEND_CAP=N` to refuse a start once `N`
+  stacks are already running (counted from the first `WTD_SERVICE_TEMPLATES`
+  entry). Protects a shared host from running out of RAM. The console enforces
+  this automatically. A project that drives its own start command gets the
+  *same* enforcement by adding `--cap` to `run-locked`: the cap count and the
+  start happen **atomically under one lock**, so two concurrent starts can't both
+  see free capacity and then both start. No-op cap when `WTD_BACKEND_CAP` is
+  `0`/unset; the cwd worktree's own containers are excluded so a restart isn't
+  self-counted. The cap is counted on the configured `WTD_REMOTE_DOCKER_HOST`
+  when set (same daemon the stack starts on):
+
+  ```bash
+  worktree-deck run-locked --cap <start-command>   # e.g. run-locked --cap make start-stack
+  ```
+
+- **Continue on a new branch.** After a PR merges and its branch is deleted, keep
+  the worktree and repoint it onto a fresh branch instead of recreating it — from
+  the worktree action menu (`[n]ext`) or the CLI:
+
+  ```bash
+  worktree-deck continue <worktree-name-or-path> <new-branch> [base]   # base defaults to origin/main
+  ```
+
+  It validates the name, fetches the base, stashes local work, creates/rebases the
+  branch, pushes with upstream tracking, regenerates env via `WTD_ENV_REGEN_CMD`
+  (if set), and pops the stash.
+
 ### Don't use Docker? It still helps.
 
 The entire stack layer is optional. Omit `WTD_SERVICE_TEMPLATES` /
@@ -170,6 +242,9 @@ column — and nothing Docker-related.
   to your project's container prefix.
 - **Quick commands** — `7s` = select #7 + start, `1r` = resume #1's last agent,
   `7dy` = delete #7 + confirm.
+
+For maintainers, see [Architecture](docs/ARCHITECTURE.md) for the setup model,
+configuration contract, runtime flows, and code map.
 
 ## Install
 
@@ -220,6 +295,11 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 
 # --- optional: bridge worktree session events to another tool ---
 # WTD_EVENT_SINK="agentic-pr-dash record"
+
+# --- optional: route the console's launch/resume actions through your own
+# launcher (same `<worktree_path> <launch_flag> [extra_args]` contract as the
+# built-in one), so the console and your other launch flows share ONE launcher ---
+# WTD_LAUNCH_CMD="bash scripts/launch-worktree-cli.sh"
 
 # --- optional: tell the resume action (<n>r) which agent last ran a worktree ---
 # Receives the worktree path as its final arg; prints "claude" or "codex".
