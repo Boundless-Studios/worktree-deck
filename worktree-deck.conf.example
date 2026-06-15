@@ -59,5 +59,15 @@ WTD_AGENT_LAUNCHERS=(claude codex)
 # Receives the worktree path as its final arg; prints "claude" or "codex".
 # WTD_LAST_AGENT_CMD="agentic-pr-dash last-agent"
 
+# --- Process-level crash resilience (tmux) ---------------------------------
+# Wrap each interactive agent launch in a per-worktree+CLI tmux session so the
+# CLI survives a terminal crash/quit/SSH drop; re-launching (or <n>r resume)
+# reattaches to the live process. auto (default) = tmux -CC under iTerm2, plain
+# tmux elsewhere. Other values: cc, plain, off. Skipped without a TTY/tmux.
+# WTD_TMUX_RESUME="auto"
+#
+# Override the session name if worktree basenames repeat across projects:
+# wtd_tmux_session_name() { printf '%s' "myapp-$(basename "$1")-$2"; }
+
 # --- Optional: background daemons the console can toggle --------------------
 # WTD_DAEMONS=(agentic-pr-dash)
