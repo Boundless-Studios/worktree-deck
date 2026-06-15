@@ -30,9 +30,28 @@ case "${1:-}" in
                 # drive their own start command (e.g. a Makefile) but want it
                 # serialized on the host. Inspect/repair the same lock with
                 # `worktree-deck lock-health`.
-                [[ $# -gt 0 ]] || { echo "usage: worktree-deck run-locked <command> [args...]" >&2; exit 2; }
+                #
+                # With --cap, ALSO enforce WTD_BACKEND_CAP atomically: the cap
+                # count and the start run under ONE lock acquisition, so two
+                # concurrent capped starts can't both observe free capacity and
+                # then both start (the TOCTOU a separate pre-flight check would
+                # leave open). No-op cap when WTD_BACKEND_CAP is 0/unset.
+                _wtd_rl_cap=0
+                if [[ "${1:-}" == "--cap" ]]; then _wtd_rl_cap=1; shift; fi
+                [[ $# -gt 0 ]] || { echo "usage: worktree-deck run-locked [--cap] <command> [args...]" >&2; exit 2; }
                 # Subshell: wtd_stack_start_lock_run installs EXIT/signal traps and
                 # `set +e`; keep them from leaking into this dispatch shell.
+                if [[ "$_wtd_rl_cap" == "1" ]]; then
+                    # The cap counts containers, so point DOCKER_HOST at the
+                    # configured remote daemon (the one the project starts stacks
+                    # on) before counting — an explicit DOCKER_HOST in the env
+                    # wins. Scoped to --cap so plain run-locked leaves the wrapped
+                    # command's own daemon resolution untouched.
+                    if [[ -n "${WTD_REMOTE_DOCKER_HOST:-}" && -z "${DOCKER_HOST:-}" ]]; then
+                        export DOCKER_HOST="$WTD_REMOTE_DOCKER_HOST"
+                    fi
+                    ( wtd_stack_start_lock_run _wtd_run_capped_command "$@" ); exit $?
+                fi
                 ( wtd_stack_start_lock_run "$@" ); exit $? ;;
         esac
         ;;
