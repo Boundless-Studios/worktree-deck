@@ -53,6 +53,15 @@ jobs:
             echo "bash -n $f"
             bash -n "$f"
           done
+          for f in test/*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: Tests
+        run: |
+          set -e
+          bash test/refresh-pr-data-timeout.sh
 
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@master

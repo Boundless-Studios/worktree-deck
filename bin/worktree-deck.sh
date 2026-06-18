@@ -369,13 +369,36 @@ refresh_pr_data() {
         return
     fi
 
+    local gh_timeout="${WTD_GH_PR_TIMEOUT_SECONDS:-2}"
+    [[ "$gh_timeout" =~ ^[0-9]+$ ]] || gh_timeout=2
+    [[ "$gh_timeout" -gt 0 ]] || gh_timeout=2
+
     # Don't gate on `gh auth status`; environments with GH_TOKEN may fail status
     # but still allow successful `gh pr list`.
-    local pr_data
-    if pr_data=$(cd "$MAIN_REPO" && gh pr list --state all --limit 500 --json number,state,headRefName,headRefOid --template '{{range .}}{{.headRefName}}{{"\t"}}{{.number}}{{"\t"}}{{.state}}{{"\t"}}{{.headRefOid}}{{"\n"}}{{end}}' 2>/dev/null); then
+    local pr_data_file pr_pid waited
+    pr_data_file="$(mktemp -t wtd-pr-data.XXXXXX)"
+    (
+        cd "$MAIN_REPO" || exit 1
+        exec gh pr list --state all --limit 500 --json number,state,headRefName,headRefOid --template '{{range .}}{{.headRefName}}{{"\t"}}{{.number}}{{"\t"}}{{.state}}{{"\t"}}{{.headRefOid}}{{"\n"}}{{end}}'
+    ) >"$pr_data_file" 2>/dev/null &
+    pr_pid=$!
+    waited=0
+    while kill -0 "$pr_pid" 2>/dev/null; do
+        if [[ "$waited" -ge "$gh_timeout" ]]; then
+            kill "$pr_pid" 2>/dev/null || true
+            wait "$pr_pid" 2>/dev/null || true
+            rm -f "$pr_data_file"
+            return
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if wait "$pr_pid" 2>/dev/null; then
         PR_DATA_AVAILABLE=1
-        PR_DATA="$pr_data"
+        PR_DATA="$(cat "$pr_data_file")"
     fi
+    rm -f "$pr_data_file"
 }
 
 # Get PR info for a branch as: "#123 open|closed|merged"
