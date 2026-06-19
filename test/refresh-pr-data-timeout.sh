@@ -45,11 +45,12 @@ PY
 }
 
 extract_refresh_pr_data() {
+    # refresh_pr_data lives in lib/pr-metadata.sh (BOU-1690 WS4 decomposition).
     awk '
         /^refresh_pr_data\(\) \{/ { in_fn=1 }
         in_fn { print }
         in_fn && /^}/ { exit }
-    ' "$ROOT/bin/worktree-deck.sh"
+    ' "$ROOT/lib/pr-metadata.sh"
 }
 
 run_refresh() {
@@ -149,7 +150,7 @@ test_stale_cleanup_branch_lookup_respects_bulk_timeout() {
         END {
             exit !(saw_timeout_guard && saw_branch_lookup)
         }
-    ' "$ROOT/bin/worktree-deck.sh" \
+    ' "$ROOT/lib/cleanup.sh" \
         || fail "per-branch gh fallback is not guarded by PR_DATA_REFRESH_TIMED_OUT"
 }
 
