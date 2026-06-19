@@ -364,18 +364,43 @@ get_slot_info() {
 refresh_pr_data() {
     PR_DATA=""
     PR_DATA_AVAILABLE=0
+    PR_DATA_REFRESH_TIMED_OUT=0
 
     if ! command -v gh &>/dev/null; then
         return
     fi
 
+    local gh_timeout="${WTD_GH_PR_TIMEOUT_SECONDS:-2}"
+    [[ "$gh_timeout" =~ ^[0-9]+$ ]] || gh_timeout=2
+    [[ "$gh_timeout" -gt 0 ]] || gh_timeout=2
+
     # Don't gate on `gh auth status`; environments with GH_TOKEN may fail status
     # but still allow successful `gh pr list`.
-    local pr_data
-    if pr_data=$(cd "$MAIN_REPO" && gh pr list --state all --limit 500 --json number,state,headRefName,headRefOid --template '{{range .}}{{.headRefName}}{{"\t"}}{{.number}}{{"\t"}}{{.state}}{{"\t"}}{{.headRefOid}}{{"\n"}}{{end}}' 2>/dev/null); then
+    local pr_data_file pr_pid remaining_ticks
+    pr_data_file="$(mktemp -t wtd-pr-data.XXXXXX)"
+    (
+        cd "$MAIN_REPO" || exit 1
+        exec gh pr list --state all --limit 500 --json number,state,headRefName,headRefOid --template '{{range .}}{{.headRefName}}{{"\t"}}{{.number}}{{"\t"}}{{.state}}{{"\t"}}{{.headRefOid}}{{"\n"}}{{end}}'
+    ) >"$pr_data_file" 2>/dev/null &
+    pr_pid=$!
+    remaining_ticks=$((gh_timeout * 20))
+    while kill -0 "$pr_pid" 2>/dev/null; do
+        if [[ "$remaining_ticks" -le 0 ]]; then
+            kill "$pr_pid" 2>/dev/null || true
+            wait "$pr_pid" 2>/dev/null || true
+            PR_DATA_REFRESH_TIMED_OUT=1
+            rm -f "$pr_data_file"
+            return
+        fi
+        sleep 0.05
+        remaining_ticks=$((remaining_ticks - 1))
+    done
+
+    if wait "$pr_pid" 2>/dev/null; then
         PR_DATA_AVAILABLE=1
-        PR_DATA="$pr_data"
+        PR_DATA="$(cat "$pr_data_file")"
     fi
+    rm -f "$pr_data_file"
 }
 
 # Get PR info for a branch as: "#123 open|closed|merged"
@@ -992,7 +1017,7 @@ remove_stale_worktrees() {
 
         # If the branch was not found in the cached PR list (capped at 500),
         # do a per-branch lookup so we don't mistakenly treat it as an orphan.
-        if [[ "$pr_state" == "none" && "$branch" != "detached" ]] && command -v gh &>/dev/null; then
+        if [[ "$pr_state" == "none" && "$branch" != "detached" && "${PR_DATA_REFRESH_TIMED_OUT:-0}" != "1" ]] && command -v gh &>/dev/null; then
             local branch_pr
             branch_pr="$(cd "$MAIN_REPO" && gh pr list --head "$branch" --state all --limit 1 \
                 --json number,state \
