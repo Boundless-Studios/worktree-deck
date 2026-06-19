@@ -79,12 +79,20 @@ Those behaviors belong in the consuming project and are exposed to
 
 Read the code as a dispatcher around a config contract:
 
-1. `bin/worktree-deck.sh` draws the console and handles user choices.
+1. `bin/worktree-deck.sh` bootstraps, dispatches headless subcommands, and runs
+   the interactive menu loop; it sources the `lib/` modules and calls their
+   functions to render rows and perform actions.
 2. `lib/config.sh` loads defaults plus project config and defines the stable
    `WTD_*` variables and `wtd_*` hook functions.
-3. Focused `lib/*.sh` files provide reusable capabilities: Docker reachability,
-   daemon management, launch mode handling, stack-start locking, branch
-   continuation, and name validation.
+3. Focused `lib/*.sh` files provide reusable capabilities. Some are TUI behavior
+   groups extracted from the entrypoint — `worktree-render.sh` (row rendering +
+   `list_worktrees`), `pr-metadata.sh` (PR snapshot), `worktree-actions.sh`
+   (start/stop/create/remove), `cleanup.sh` (stale-worktree/container pruning),
+   `terminal.sh` (terminal/agent launching) — and the rest are cross-cutting
+   capabilities: Docker reachability, daemon management, launch-mode handling,
+   stack-start locking, branch continuation, and name validation. They share the
+   shell's global scope via `source`, so globals set in the entrypoint remain
+   visible to the extracted functions.
 
 Most confusing behavior becomes easier if you ask two questions:
 
@@ -236,7 +244,12 @@ agent sessions.
 
 | Path | Responsibility |
 | --- | --- |
-| `bin/worktree-deck.sh` | Interactive console, row rendering, menu actions, headless subcommand dispatch. |
+| `bin/worktree-deck.sh` | Bootstrap (sourcing, non-interactive `wc` guard), headless subcommand dispatch, config/daemon helpers, and the interactive TUI coordination layer (the menu functions `main_menu`/`worktree_menu`/`console_config_menu` and the input loop). Delegates rendering and actions to the `lib/` modules below. |
+| `lib/pr-metadata.sh` | PR data fetch + state for the render snapshot (`refresh_pr_data`, `get_pr_info`, `get_pr_state`, `get_pr_merged_head_oid`). |
+| `lib/worktree-render.sh` | Worktree-row rendering helpers and `list_worktrees` (name/header, container status, port/slot info, docker-reachability reprobe). |
+| `lib/worktree-actions.sh` | Per-worktree lifecycle actions (`start`/`stop`/`restart`/`create`/`remove`/`stop_all`, stale-lock clearing). |
+| `lib/cleanup.sh` | Merged/stale worktree pruning and dead/orphan container cleanup, with the `PR_DATA_REFRESH_TIMED_OUT`-guarded per-branch `gh pr list` fallback. |
+| `lib/terminal.sh` | Terminal-tab/AppleScript launching, inline CLI launch, agent resume, open frontend/VS Code, logs, e2e. |
 | `lib/config.sh` | Defaults, config loading, hook contract, stack command execution, backend cap. |
 | `lib/docker-reachable.sh` | Docker reachability, remote/local selection, wake/reprobe hooks. |
 | `lib/stack-start-lock.sh` | Host-global `mkdir` lock, owner metadata, stale detection, health/repair. |
