@@ -40,15 +40,22 @@ if [ "$(uname)" = "Darwin" ] && command -v python3 >/dev/null 2>&1; then
 fi
 
 # 4. Auto-open Obsidian ONLY on the first session of a brand-new (non-default) branch.
+#    The `obsidian://open?path=<dir>` deep link opens the vault that CONTAINS the path
+#    (verified against a registered vault dir), but it can only resolve a vault Obsidian
+#    already knows. So we open first, then burn the marker — and we only do so once the
+#    vault is actually registered in obsidian.json. If it isn't yet (e.g. before Obsidian's
+#    first run), we skip WITHOUT marking, so a later session retries instead of the branch
+#    being permanently suppressed.
 if [ "${GAIA_PLANS_NO_OPEN:-0}" != "1" ] && [ "$(uname)" = "Darwin" ]; then
     BRANCH="$(git -C "$PWD" branch --show-current 2>/dev/null || true)"
     case "$BRANCH" in
         "" | main | master | HEAD) : ;;
         *)
             MARK="$MARKERS/${BRANCH//\//__}"
-            if [ ! -f "$MARK" ]; then
-                : > "$MARK" 2>/dev/null || true
+            OBS_CFG="$HOME/Library/Application Support/obsidian/obsidian.json"
+            if [ ! -f "$MARK" ] && [ -f "$OBS_CFG" ] && grep -Fq "\"$VAULT\"" "$OBS_CFG" 2>/dev/null; then
                 open -a Obsidian "obsidian://open?path=$VAULT" >/dev/null 2>&1 || true
+                : > "$MARK" 2>/dev/null || true
             fi
             ;;
     esac
