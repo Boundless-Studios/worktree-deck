@@ -238,7 +238,7 @@ wtd_worktree_created_epoch() {
 # Get the latest local git activity time for a worktree
 wtd_worktree_updated_epoch() {
     local worktree_path="${1:-}"
-    local gitdir epoch
+    local gitdir index_epoch commit_epoch best
 
     if [[ -z "$worktree_path" ]] \
         || ! gitdir=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null); then
@@ -247,20 +247,24 @@ wtd_worktree_updated_epoch() {
     fi
     [[ "$gitdir" == /* ]] || gitdir="$worktree_path/$gitdir"
 
+    # Take the newer of index mtime and last-commit time: the index catches
+    # uncommitted activity (add/checkout/status refresh), but operations like
+    # `git commit --allow-empty` move HEAD without rewriting the index, so
+    # neither source alone is authoritative.
+    index_epoch=""
     if [[ -f "$gitdir/index" ]]; then
         # GNU-first for the same reason as wtd_worktree_created_epoch.
-        if ! epoch=$(stat -c %Y "$gitdir/index" 2>/dev/null); then
-            epoch=$(stat -f %m "$gitdir/index" 2>/dev/null || true)
-        fi
-        if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
-            echo "$epoch"
-            return 0
+        if ! index_epoch=$(stat -c %Y "$gitdir/index" 2>/dev/null); then
+            index_epoch=$(stat -f %m "$gitdir/index" 2>/dev/null || true)
         fi
     fi
+    commit_epoch=$(git -C "$worktree_path" log -1 --format=%ct 2>/dev/null || true)
 
-    epoch=$(git -C "$worktree_path" log -1 --format=%ct 2>/dev/null || true)
-    if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
-        echo "$epoch"
+    best=0
+    [[ "$index_epoch" =~ ^[0-9]+$ ]] && (( index_epoch > best )) && best="$index_epoch"
+    [[ "$commit_epoch" =~ ^[0-9]+$ ]] && (( commit_epoch > best )) && best="$commit_epoch"
+    if (( best > 0 )); then
+        echo "$best"
     else
         echo
     fi

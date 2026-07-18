@@ -89,6 +89,16 @@ updated_t1="$(wtd_worktree_updated_epoch "$WT_PARENT/feat")"
 (( updated_t1 > updated_t0 )) \
     || fail "updated epoch did not advance after commit: $updated_t0 -> $updated_t1"
 
+# An empty commit moves HEAD without rewriting the index; with the index
+# backdated, "updated" must follow the newer commit time (PR #16 review).
+touch -t 202001010000 "$(git -C "$WT_PARENT/feat" rev-parse --absolute-git-dir)/index"
+before_empty="$(date +%s)"
+git -C "$WT_PARENT/feat" -c user.email=t@t -c user.name=t commit -q --allow-empty -m empty
+updated_t2="$(wtd_worktree_updated_epoch "$WT_PARENT/feat")"
+[[ "$updated_t2" =~ ^[0-9]+$ ]] || fail "post-empty-commit updated epoch not numeric: '$updated_t2'"
+(( updated_t2 >= before_empty - 1 )) \
+    || fail "updated epoch ignored empty commit with stale index: $updated_t2 < $before_empty"
+
 # A path that isn't a worktree renders as unknown, not a crash.
 NOT_A_REPO="$(mktemp -d "${TMPDIR:-/tmp}/wtd-ts-none.XXXXXX")"
 CLEANUP_DIRS+=("$NOT_A_REPO")
