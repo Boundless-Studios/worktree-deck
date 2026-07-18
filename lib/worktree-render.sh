@@ -163,6 +163,109 @@ get_slot_info() {
     fi
 }
 
+# Format an epoch as a compact relative age
+wtd_format_age() {
+    local epoch="${1:-}"
+    local now_epoch="${2:-}"
+    local age
+
+    [[ -n "$now_epoch" ]] || now_epoch=$(date +%s 2>/dev/null || true)
+    if [[ ! "$epoch" =~ ^[0-9]+$ || ! "$now_epoch" =~ ^[0-9]+$ ]]; then
+        echo "-"
+        return 0
+    fi
+
+    epoch=$((10#$epoch))
+    now_epoch=$((10#$now_epoch))
+    if (( epoch == 0 || epoch > now_epoch )); then
+        echo "-"
+        return 0
+    fi
+
+    age=$((now_epoch - epoch))
+    if (( age < 60 )); then
+        echo "<1m"
+    elif (( age < 3600 )); then
+        echo "$((age / 60))m"
+    elif (( age < 86400 )); then
+        echo "$((age / 3600))h"
+    elif (( age < 604800 )); then
+        echo "$((age / 86400))d"
+    elif (( age < 2592000 )); then
+        echo "$((age / 604800))w"
+    elif (( age < 31536000 )); then
+        echo "$((age / 2592000))mo"
+    else
+        echo "$((age / 31536000))y"
+    fi
+}
+
+# Get a worktree's git directory creation time
+wtd_worktree_created_epoch() {
+    local worktree_path="${1:-}"
+    local gitdir epoch fallback_path
+
+    if [[ -z "$worktree_path" ]] \
+        || ! gitdir=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null); then
+        echo
+        return 0
+    fi
+    [[ "$gitdir" == /* ]] || gitdir="$worktree_path/$gitdir"
+
+    # GNU first: BSD stat rejects -c cleanly, but probing BSD's -f first would
+    # "succeed" on GNU (filesystem mode: %B = block size, %m = mount point) and
+    # return garbage instead of failing over.
+    if ! epoch=$(stat -c %W "$gitdir" 2>/dev/null); then
+        epoch=$(stat -f %B "$gitdir" 2>/dev/null || true)
+    fi
+    if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
+        echo "$epoch"
+        return 0
+    fi
+
+    fallback_path="$gitdir"
+    [[ -f "$gitdir/gitdir" ]] && fallback_path="$gitdir/gitdir"
+    if ! epoch=$(stat -c %Y "$fallback_path" 2>/dev/null); then
+        epoch=$(stat -f %m "$fallback_path" 2>/dev/null || true)
+    fi
+    if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
+        echo "$epoch"
+    else
+        echo
+    fi
+}
+
+# Get the latest local git activity time for a worktree
+wtd_worktree_updated_epoch() {
+    local worktree_path="${1:-}"
+    local gitdir epoch
+
+    if [[ -z "$worktree_path" ]] \
+        || ! gitdir=$(git -C "$worktree_path" rev-parse --git-dir 2>/dev/null); then
+        echo
+        return 0
+    fi
+    [[ "$gitdir" == /* ]] || gitdir="$worktree_path/$gitdir"
+
+    if [[ -f "$gitdir/index" ]]; then
+        # GNU-first for the same reason as wtd_worktree_created_epoch.
+        if ! epoch=$(stat -c %Y "$gitdir/index" 2>/dev/null); then
+            epoch=$(stat -f %m "$gitdir/index" 2>/dev/null || true)
+        fi
+        if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
+            echo "$epoch"
+            return 0
+        fi
+    fi
+
+    epoch=$(git -C "$worktree_path" log -1 --format=%ct 2>/dev/null || true)
+    if [[ "$epoch" =~ ^[0-9]+$ ]] && (( epoch > 0 )); then
+        echo "$epoch"
+    else
+        echo
+    fi
+}
+
 # List all worktrees with status
 list_worktrees() {
     refresh_pr_data
@@ -223,11 +326,13 @@ list_worktrees() {
     if [[ "$_status_from_local_fallback" -eq 1 ]]; then
         echo -e "  ${YELLOW}Configured remote DOCKER_HOST unreachable — STATUS shown from local daemon.${NC}"
     fi
-    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
-    printf "  %-4s %-22s %-3s %-8s%-5s %-14s %s\n" "#" "NAME" "ON" "STATUS" "SLOT" "PORTS" "PR"
-    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
+    printf "  %-4s %-22s %-3s %-8s%-5s %-14s %-8s %-8s %s\n" "#" "NAME" "ON" "STATUS" "SLOT" "PORTS" "CREATED" "UPDATED" "PR"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
 
     local i=1
+    local now_epoch
+    now_epoch=$(date +%s 2>/dev/null || true)
     declare -g -a WORKTREE_PATHS=()
 
     while IFS= read -r line; do
@@ -240,6 +345,9 @@ list_worktrees() {
         local slot=$(get_slot_info "$path")
         local ports=$(get_port_info "$path")
         local pr=$(get_pr_info "$branch")
+        local created updated
+        created=$(wtd_format_age "$(wtd_worktree_created_epoch "$path")" "$now_epoch")
+        updated=$(wtd_format_age "$(wtd_worktree_updated_epoch "$path")" "$now_epoch")
         local service_names
         service_names="$(worktree_service_names "$path")"
 
@@ -277,12 +385,15 @@ list_worktrees() {
         local pname=$(printf "%-28s" "$display_name")
         local pslot=$(printf "%-5s" "$slot")
         local pports=$(printf "%-14s" "$ports")
+        local pcreated pupdated
+        pcreated=$(printf "%-8s" "$created")
+        pupdated=$(printf "%-8s" "$updated")
 
-        echo -e "${marker} $(printf "%-3s" "$i") ${CYAN}${pname}${NC}${where_icon} ${dot_color}${dot}${NC}   ${pslot} ${pports} ${pr}"
+        echo -e "${marker} $(printf "%-3s" "$i") ${CYAN}${pname}${NC}${where_icon} ${dot_color}${dot}${NC}   ${pslot} ${pports} ${pcreated} ${pupdated} ${pr}"
         ((i++))
     done < <(git -C "$MAIN_REPO" worktree list 2>/dev/null)
 
-    echo -e "${CYAN}──────────────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────────────────────────────────${NC}"
 
     # Dead container / orphan summary
     local dead_count=0
