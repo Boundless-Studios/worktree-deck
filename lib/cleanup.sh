@@ -199,7 +199,11 @@ remove_stale_worktrees() {
                 # Skip if worktree has uncommitted local changes
                 if [[ -d "$path" ]]; then
                     local wt_dirty
-                    wt_dirty="$(git -C "$path" status --porcelain 2>/dev/null || true)"
+                    # --no-optional-locks: a plain `git status` opportunistically
+                    # rewrites even a clean index, which would bump the mtime the
+                    # console's UPDATED column reads — the reaper's own probe must
+                    # not make every scanned worktree look freshly touched.
+                    wt_dirty="$(git -C "$path" --no-optional-locks status --porcelain 2>/dev/null || true)"
                     if [[ -n "$wt_dirty" ]]; then
                         continue
                     fi

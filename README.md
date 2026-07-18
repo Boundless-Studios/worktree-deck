@@ -14,13 +14,13 @@ keyboard-driven console to see and drive all of them.
 ╚═══════════════════════════════════════════════╝
   Docker:  💻 local
 
-   #  worktree         status        slot   ports            PR
-  ─────────────────────────────────────────────────────────────────
-  * 1   main           ● running      0     B:8000 F:3000    —
-    2   rate-limiter   ● running      2     B:8020 F:3002    #418 OPEN
-    3   search-paging  ○ stopped      3     B:8030 F:3003    #421 OPEN
-    4   checkout-retry 🖥 ● running    5     B:8050 F:3005    #412 OPEN
-  ─────────────────────────────────────────────────────────────────
+   #  worktree         status        slot   ports            created  updated  PR
+  ───────────────────────────────────────────────────────────────────────────────────
+  * 1   main           ● running      0     B:8000 F:3000    1y       5m       —
+    2   rate-limiter   ● running      2     B:8020 F:3002    2d       3h       #418 OPEN
+    3   search-paging  ○ stopped      3     B:8030 F:3003    1w       2d       #421 OPEN
+    4   checkout-retry 🖥 ● running    5     B:8050 F:3005    3w       5h       #412 OPEN
+  ───────────────────────────────────────────────────────────────────────────────────
   [#] select   [n]ew   [X] stop+clean all   [M] reap stale   [q]uit
 ```
 
