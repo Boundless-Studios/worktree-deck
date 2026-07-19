@@ -75,6 +75,25 @@ wtd_launch_label_from_flag() {
     esac
 }
 
+# Opaque session id used only to correlate a launch's start/end events. Honors a
+# caller-supplied WTD_SESSION_ID (chain metadata threaded by a supervisor), and
+# otherwise mints the same "<launcher pid>-<worktree HEAD>" fallback for every
+# launch path. Both the built-in launcher and the managed seam go through here so
+# a managed wrapper that requires a nonempty id (`${WTD_SESSION_ID:?...}`) works
+# from the plain TUI, where WTD_SESSION_ID is ordinarily unset.
+# Args: worktree_path
+wtd_session_id() {
+    local path="${1:-}" head=nohead
+    if [[ -n "${WTD_SESSION_ID:-}" ]]; then
+        printf '%s\n' "$WTD_SESSION_ID"
+        return 0
+    fi
+    if [[ -n "$path" ]]; then
+        head="$(git -C "$path" rev-parse --short HEAD 2>/dev/null || echo nohead)"
+    fi
+    printf 'wtd-%s-%s\n' "$$" "$head"
+}
+
 # Resume arguments for an agent CLI: the flags that continue that CLI's most
 # recent session in the current directory. Consumed by the console's resume
 # action (`<n>r`). Empty output means "no known way to resume this CLI" — the

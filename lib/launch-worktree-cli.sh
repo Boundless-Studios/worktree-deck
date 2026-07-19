@@ -35,8 +35,9 @@ CLI_COMMAND="$(wtd_launch_cli_from_flag "$LAUNCH_FLAG")"
 # on purpose so a caller can pass "resume --last" as a single argument.
 EXTRA_CLI_ARGS="${3:-}"
 
-# Session id is opaque; used only to correlate start/end events.
-SESSION_ID="${WTD_SESSION_ID:-wtd-$$-$(git -C "$WORKTREE_PATH" rev-parse --short HEAD 2>/dev/null || echo nohead)}"
+# Session id is opaque; used only to correlate start/end events. Shared with the
+# managed fresh-launch seam so both paths mint the same fallback shape.
+SESSION_ID="$(wtd_session_id "$WORKTREE_PATH")"
 
 # Optional event bridge: WTD_EVENT_SINK is a command that receives
 #   "<event> <session_id> <cli> <worktree_path> <launcher_pid> [exit_code]"

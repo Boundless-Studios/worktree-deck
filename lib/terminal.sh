@@ -165,6 +165,12 @@ launch_worktree_agent() {
     local launch_flag
     launch_flag="$(wtd_normalize_launch_flag "$cli_command")"
 
+    # A managed wrapper is entitled to require a nonempty session id, but a plain
+    # TUI launch has no ambient WTD_SESSION_ID. Mint the built-in launcher's
+    # fallback here so both launch paths hand the wrapper the same shape of id.
+    local session_id
+    session_id="$(wtd_session_id "$path")"
+
     echo -e "${BLUE}Launching managed ${label}...${NC}"
     # Project-provided command; preserve the same intentionally shell-like
     # configuration contract as WTD_LAUNCH_CMD (for example, "bash script").
@@ -173,7 +179,7 @@ launch_worktree_agent() {
         cd "$path" || exit 1
         WTD_MANAGED_EVENT_OWNER=1 \
         WTD_PROJECT_DIR="$path" \
-        WTD_SESSION_ID="${WTD_SESSION_ID:-}" \
+        WTD_SESSION_ID="$session_id" \
             ${WTD_MANAGED_FRESH_CMD} "$path" "$launch_flag" "$extra_args"
     )
 }

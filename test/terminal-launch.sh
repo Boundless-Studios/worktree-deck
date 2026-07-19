@@ -103,8 +103,25 @@ assert_file_eq \
     "managed fresh dispatch"
 assert_file_eq "claude" "$NORMALIZE_LOG" "managed selector normalized once"
 
+# A plain TUI launch has no ambient WTD_SESSION_ID. The managed wrapper is
+# entitled to require one (`${WTD_SESSION_ID:?...}`), so the seam must mint the
+# built-in launcher's fallback rather than forwarding an empty value.
 : > "$LEGACY_LOG"
 : > "$MANAGED_LOG"
+: > "$NORMALIZE_LOG"
+unset WTD_SESSION_ID
+launch_worktree_agent "$WORKTREE" claude "Claude Code"
+managed_line="$(cat "$MANAGED_LOG")"
+managed_session="${managed_line#*|session=}"
+managed_session="${managed_session%%|*}"
+[[ -n "$managed_session" ]] \
+    || fail "managed launch forwarded an empty session id with WTD_SESSION_ID unset"
+[[ "$managed_session" =~ ^wtd-[0-9]+-[0-9a-z]+$ ]] \
+    || fail "managed fallback session id '$managed_session' does not match the built-in launcher shape"
+
+: > "$LEGACY_LOG"
+: > "$MANAGED_LOG"
+export WTD_SESSION_ID="opaque-deck-session"
 wtd_last_agent_cli() { printf '%s\n' codex; }
 resume_worktree_agent "$WORKTREE" codex "Codex CLI"
 assert_file_eq \
