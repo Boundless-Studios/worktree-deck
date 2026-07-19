@@ -22,6 +22,20 @@ wtd_is_launch_selector() {
     esac
 }
 
+# Return success for interactive actions that create a fresh agent session.
+# Resume remains deliberately separate so configuring a managed fresh-session
+# wrapper cannot change worktree-deck's existing manual resume semantics.
+wtd_is_fresh_action() {
+    case "${1:-}" in
+        o|O|open|c|C|claude|e|codex)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 wtd_normalize_launch_flag() {
     case "${1:-}" in
         "" )
@@ -59,6 +73,25 @@ wtd_launch_label_from_flag() {
             printf '%s\n' "Codex CLI"
             ;;
     esac
+}
+
+# Opaque session id used only to correlate a launch's start/end events. Honors a
+# caller-supplied WTD_SESSION_ID (chain metadata threaded by a supervisor), and
+# otherwise mints the same "<launcher pid>-<worktree HEAD>" fallback for every
+# launch path. Both the built-in launcher and the managed seam go through here so
+# a managed wrapper that requires a nonempty id (`${WTD_SESSION_ID:?...}`) works
+# from the plain TUI, where WTD_SESSION_ID is ordinarily unset.
+# Args: worktree_path
+wtd_session_id() {
+    local path="${1:-}" head=nohead
+    if [[ -n "${WTD_SESSION_ID:-}" ]]; then
+        printf '%s\n' "$WTD_SESSION_ID"
+        return 0
+    fi
+    if [[ -n "$path" ]]; then
+        head="$(git -C "$path" rev-parse --short HEAD 2>/dev/null || echo nohead)"
+    fi
+    printf 'wtd-%s-%s\n' "$$" "$head"
 }
 
 # Resume arguments for an agent CLI: the flags that continue that CLI's most

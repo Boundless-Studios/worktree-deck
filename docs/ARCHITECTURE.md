@@ -130,8 +130,8 @@ Application-specific behavior should enter through:
 - `WTD_STACK_START`, `WTD_STACK_STOP`, `WTD_STACK_RESTART`, `WTD_E2E_CMD`;
 - `WTD_SERVICE_TEMPLATES`, `WTD_ENV_CONTAINER_KEYS`, and port/slot key names;
 - `WTD_REMOTE_DOCKER_HOST` and `WTD_REMOTE_TUNNEL_CMD`;
-- `WTD_LAUNCH_CMD`, `WTD_AGENT_LAUNCHERS`, `WTD_EVENT_SINK`,
-  `WTD_LAST_AGENT_CMD`;
+- `WTD_LAUNCH_CMD`, `WTD_MANAGED_FRESH_CMD`, `WTD_AGENT_LAUNCHERS`,
+  `WTD_EVENT_SINK`, `WTD_LAST_AGENT_CMD`;
 - `WTD_DAEMONS` and the daemon registry maps;
 - hook overrides such as `wtd_branch_tag()` or `wtd_launch_cli_from_flag()`.
 
@@ -223,6 +223,28 @@ own launcher. The contract is:
 The command runs with the target worktree as the current directory, so relative
 commands can refer to files in the managed repo.
 
+`WTD_MANAGED_FRESH_CMD` is a narrower, opt-in seam for a project-owned session
+supervisor. Only fresh `o/c/e` actions use it, with the same generic command
+shape:
+
+```text
+<command> <worktree_path> <launch_flag> [extra_args]
+```
+
+When it is empty, dispatch is byte-for-byte the legacy `WTD_LAUNCH_CMD` or
+built-in path. Manual `r` resume deliberately bypasses the managed seam and
+retains `WTD_LAST_AGENT_CMD`, native resume arguments, and `WTD_TMUX_RESUME`.
+The managed process runs directly rather than under a second deck-owned tmux
+wrapper.
+
+The managed command receives `WTD_PROJECT_DIR`, `WTD_MANAGED_EVENT_OWNER=1`,
+and any existing `WTD_SESSION_ID`. `WTD_SESSION_ID` is opaque chain/launcher
+metadata, never a native Claude or Codex conversation ID. The ownership flag is
+preserved across a built-in launcher's tmux re-exec and suppresses its legacy
+event bridge, leaving the supervisor as the single lifecycle owner. A managed
+supervisor may rotate to fresh native conversations, but automatic rotation
+must never invoke the manual resume path.
+
 Session lifecycle events are sent to `WTD_EVENT_SINK` when configured. Resume
 uses `WTD_LAST_AGENT_CMD` to ask the downstream project which agent last worked
 in a worktree, then maps that agent to resume args through
@@ -249,13 +271,13 @@ agent sessions.
 | `lib/worktree-render.sh` | Worktree-row rendering helpers and `list_worktrees` (name/header, container status, port/slot info, docker-reachability reprobe). |
 | `lib/worktree-actions.sh` | Per-worktree lifecycle actions (`start`/`stop`/`restart`/`create`/`remove`/`stop_all`, stale-lock clearing). |
 | `lib/cleanup.sh` | Merged/stale worktree pruning and dead/orphan container cleanup, with the `PR_DATA_REFRESH_TIMED_OUT`-guarded per-branch `gh pr list` fallback. |
-| `lib/terminal.sh` | Terminal-tab/AppleScript launching, inline CLI launch, agent resume, open frontend/VS Code, logs, e2e. |
+| `lib/terminal.sh` | Terminal-tab/AppleScript launching, legacy and managed-fresh CLI dispatch, agent resume, open frontend/VS Code, logs, e2e. |
 | `lib/config.sh` | Defaults, config loading, hook contract, stack command execution, backend cap. |
 | `lib/docker-reachable.sh` | Docker reachability, remote/local selection, wake/reprobe hooks. |
 | `lib/stack-start-lock.sh` | Host-global `mkdir` lock, owner metadata, stale detection, health/repair. |
 | `lib/continue-worktree.sh` | Generic branch continuation flow for an existing worktree. |
-| `lib/launch-worktree-cli.sh` | Built-in agent launcher for terminal tabs and inline sessions. |
-| `lib/worktree-launch-mode.sh` | Launch flag normalization and resume-argument mapping. |
+| `lib/launch-worktree-cli.sh` | Built-in agent launcher for terminal tabs and inline sessions, including legacy lifecycle-event ownership. |
+| `lib/worktree-launch-mode.sh` | Launch flag normalization, fresh-action classification, and resume-argument mapping. |
 | `lib/daemon.sh` | Configured background daemon lifecycle, pidfiles, logs, orphan cleanup. |
 | `lib/validate-worktree-name.sh` | Branch/worktree name validation shared by create and continue flows. |
 | `worktree-deck.conf.example` | Canonical example of the config contract. |
@@ -290,6 +312,8 @@ Important Gaia-facing integration points are:
   containers without hardcoding them upstream;
 - `WTD_EVENT_SINK` records launched agent sessions into Gaia's
   `agentic-pr-dash` session registry;
+- `WTD_MANAGED_FRESH_CMD` may invoke a Gaia-owned harness adapter while the
+  upstream deck remains unaware of Gaia task, checkpoint, or safety policy;
 - `WTD_LAST_AGENT_CMD` lets resume reopen the most recent Gaia agent;
 - `WTD_DAEMONS` declares the PR dashboard as a configurable daemon;
 - Gaia-specific Docker, DB, Auth0, proof, tunnel, and test policy remains in

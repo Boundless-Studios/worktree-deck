@@ -55,6 +55,20 @@ WTD_AGENT_LAUNCHERS=(claude codex)
 # --- Optional: bridge session events to another tool -----------------------
 # WTD_EVENT_SINK="agentic-pr-dash record"
 
+# --- Optional: project-owned agent launchers -------------------------------
+# Override the legacy fresh + manual-resume launcher. Receives:
+#   <worktree_path> <launch_flag> [extra_args]
+# WTD_LAUNCH_CMD="bash scripts/launch-worktree-cli.sh"
+#
+# Route only fresh [o]pen/[c]laude/[e]codex actions through a long-lived
+# supervisor such as agent-session-harness. The command receives the same argv
+# contract above and runs with the worktree as cwd. It inherits
+# WTD_PROJECT_DIR, opaque WTD_SESSION_ID chain metadata, and
+# WTD_MANAGED_EVENT_OWNER=1. The project wrapper supplies task identity,
+# checkpoint adapters, thresholds, and other policy. Empty (the default) keeps
+# every legacy launch unchanged; the manual <n>r action always bypasses it.
+# WTD_MANAGED_FRESH_CMD="bash scripts/managed-agent-session.sh"
+
 # --- Optional: which agent last ran a worktree (for the resume action <n>r) -
 # Receives the worktree path as its final arg; prints "claude" or "codex".
 # WTD_LAST_AGENT_CMD="agentic-pr-dash last-agent"

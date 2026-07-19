@@ -61,6 +61,9 @@ jobs:
       - name: Tests
         run: |
           set -e
+          bash test/worktree-launch-mode.sh
+          bash test/terminal-launch.sh
+          bash test/launch-worktree-cli.sh
           bash test/refresh-pr-data-timeout.sh
           bash test/render-timestamps.sh
 

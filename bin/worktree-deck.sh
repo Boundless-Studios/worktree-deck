@@ -399,13 +399,13 @@ worktree_menu() {
                 open_vscode "$path"
                 ;;
             o|O|open)
-                launch_cli_inline "$path" "$preferred_cli" "$preferred_label"
+                launch_worktree_agent "$path" "$preferred_cli" "$preferred_label"
                 ;;
             c|C|claude)
-                launch_cli_inline "$path" "claude" "Claude Code"
+                launch_worktree_agent "$path" "claude" "Claude Code"
                 ;;
             e|codex)
-                launch_cli_inline "$path" "codex" "Codex CLI"
+                launch_worktree_agent "$path" "codex" "Codex CLI"
                 ;;
             E|e2e)
                 run_e2e_tests "$path" "$pre_extra"

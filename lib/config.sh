@@ -107,6 +107,17 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # "bash scripts/launch-worktree-cli.sh") resolves against the project tree.
 : "${WTD_LAUNCH_CMD:=}"
 
+# Optional: supervise only fresh agent actions ([o]pen/[c]laude/[e]codex)
+# through a project-provided command. Invoked from the target worktree as:
+#   <cmd> <worktree_path> <launch_flag> [extra_args]
+# The command owns any richer session policy and may translate this generic
+# contract into another supervisor's project-specific adapters. The console
+# supplies only neutral launch metadata and does not infer project policy. It
+# also marks the managed command as lifecycle owner so nested legacy launchers
+# suppress duplicate WTD_EVENT_SINK events.
+# Empty => preserve the legacy WTD_LAUNCH_CMD/built-in launch path exactly.
+: "${WTD_MANAGED_FRESH_CMD:=}"
+
 # Optional: serialize stack-start host-globally (only one worktree's start runs
 # at a time). Off by default; set to 1/true when your start command touches
 # host-global resources (a shared file-sync session, a shared image builder,
