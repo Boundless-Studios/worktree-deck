@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wtd-terminal-launch.XXXXXX")"
+TMP_BASE="${TMPDIR:-/tmp}"
+TMP_ROOT="$(mktemp -d "${TMP_BASE%/}/wtd-terminal-launch.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 fail() {

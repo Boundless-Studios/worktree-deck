@@ -143,6 +143,40 @@ launch_cli_inline() {
     fi
 }
 
+# Launch a fresh agent session, optionally through a project-provided session
+# supervisor. The managed command receives the same neutral launcher contract
+# as WTD_LAUNCH_CMD and runs directly from the target worktree; worktree-deck
+# does not add a second tmux/process owner around it.
+#
+# WTD_SESSION_ID is opaque chain metadata only. It is intentionally forwarded
+# without interpreting it as a native Claude or Codex conversation identifier.
+launch_worktree_agent() {
+    local path="$1"
+    local cli_command="$2"
+    local label="$3"
+    shift 3
+    local extra_args="$*"
+    local launch_flag
+    launch_flag="$(wtd_normalize_launch_flag "$cli_command")"
+
+    if [[ -z "${WTD_MANAGED_FRESH_CMD:-}" ]]; then
+        launch_cli_inline "$path" "$cli_command" "$label" "$@"
+        return
+    fi
+
+    echo -e "${BLUE}Launching managed ${label}...${NC}"
+    # Project-provided command; preserve the same intentionally shell-like
+    # configuration contract as WTD_LAUNCH_CMD (for example, "bash script").
+    # shellcheck disable=SC2086
+    (
+        cd "$path" || exit 1
+        WTD_MANAGED_EVENT_OWNER=1 \
+        WTD_PROJECT_DIR="$path" \
+        WTD_SESSION_ID="${WTD_SESSION_ID:-}" \
+            ${WTD_MANAGED_FRESH_CMD} "$path" "$launch_flag" "$extra_args"
+    )
+}
+
 # Print the agent CLI (e.g. claude|codex) of the most-recent session in a
 # worktree via the optional WTD_LAST_AGENT_CMD hook. Empty when the hook is
 # unconfigured or reports nothing.

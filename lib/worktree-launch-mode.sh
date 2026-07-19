@@ -22,6 +22,20 @@ wtd_is_launch_selector() {
     esac
 }
 
+# Return success for interactive actions that create a fresh agent session.
+# Resume remains deliberately separate so configuring a managed fresh-session
+# wrapper cannot change worktree-deck's existing manual resume semantics.
+wtd_is_fresh_action() {
+    case "${1:-}" in
+        o|O|open|c|C|claude|e|codex)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 wtd_normalize_launch_flag() {
     case "${1:-}" in
         "" )
