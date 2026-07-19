@@ -155,14 +155,15 @@ launch_worktree_agent() {
     local cli_command="$2"
     local label="$3"
     shift 3
-    local extra_args="$*"
-    local launch_flag
-    launch_flag="$(wtd_normalize_launch_flag "$cli_command")"
 
     if [[ -z "${WTD_MANAGED_FRESH_CMD:-}" ]]; then
         launch_cli_inline "$path" "$cli_command" "$label" "$@"
         return
     fi
+
+    local extra_args="$*"
+    local launch_flag
+    launch_flag="$(wtd_normalize_launch_flag "$cli_command")"
 
     echo -e "${BLUE}Launching managed ${label}...${NC}"
     # Project-provided command; preserve the same intentionally shell-like
