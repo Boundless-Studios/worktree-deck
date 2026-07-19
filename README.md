@@ -343,7 +343,7 @@ metadata; it is not a Claude or Codex native conversation ID. The managed
 command is launched directly, without a second worktree-deck tmux owner. If it
 calls the built-in launcher below itself, the ownership flag suppresses the
 legacy `WTD_EVENT_SINK` lifecycle bridge so only the supervisor emits canonical
-`started`/`completed`/`failed` events.
+lifecycle events.
 
 For example, a project can configure a thin host wrapper:
 
