@@ -112,7 +112,9 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 #   <cmd> <worktree_path> <launch_flag> [extra_args]
 # The command owns any richer session policy and may translate this generic
 # contract into another supervisor's project-specific adapters. The console
-# supplies only neutral launch metadata and does not infer project policy.
+# supplies only neutral launch metadata and does not infer project policy. It
+# also marks the managed command as lifecycle owner so nested legacy launchers
+# suppress duplicate WTD_EVENT_SINK events.
 # Empty => preserve the legacy WTD_LAUNCH_CMD/built-in launch path exactly.
 : "${WTD_MANAGED_FRESH_CMD:=}"
 

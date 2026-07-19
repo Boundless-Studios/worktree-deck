@@ -223,13 +223,15 @@ column — and nothing Docker-related.
 - **Start / stop / restart** a worktree's dev stack via your configured commands.
 - **Launch an agent CLI** (Claude Code, Codex, aider, …) *inside* a worktree, in
   a new terminal tab, with the right working directory — with an optional
-  session-event bridge (`WTD_EVENT_SINK`).
+  session-event bridge (`WTD_EVENT_SINK`) or managed fresh-session supervisor
+  (`WTD_MANAGED_FRESH_CMD`).
 - **Resume an agent** (`<n>r`) — relaunch the agent that last worked a worktree
   with its resume flags (`claude --continue` / `codex resume --last`). Which
   agent ran last comes from the optional `WTD_LAST_AGENT_CMD` hook; without it,
   resume uses the worktree's default launcher.
-- **Crash-resilient sessions** (`WTD_TMUX_RESUME`, on by default) — each agent
-  launch runs inside a per-worktree+CLI **tmux** session, so the CLI keeps
+- **Crash-resilient direct sessions** (`WTD_TMUX_RESUME`, on by default) — each
+  built-in or `WTD_LAUNCH_CMD` launch runs inside a per-worktree+CLI **tmux**
+  session, so the CLI keeps
   running on the tmux server if the terminal crashes, is quit, or an SSH
   connection drops. Re-launching the worktree (or `<n>r`) reattaches to the
   *same live process*, mid-task; only when no live session exists do the resume
@@ -301,6 +303,10 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 # built-in one), so the console and your other launch flows share ONE launcher ---
 # WTD_LAUNCH_CMD="bash scripts/launch-worktree-cli.sh"
 
+# --- optional: route only fresh [o]pen/[c]laude/[e]codex actions through a
+# project-owned supervisor; manual <n>r still uses the launcher above ---
+# WTD_MANAGED_FRESH_CMD="bash scripts/managed-agent-session.sh"
+
 # --- optional: tell the resume action (<n>r) which agent last ran a worktree ---
 # Receives the worktree path as its final arg; prints "claude" or "codex".
 # Without this, resume just relaunches the worktree's default launcher.
@@ -315,6 +321,75 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 
 Every value is optional and has a project-agnostic default; any `WTD_*` can also
 come from the environment. See `worktree-deck.conf.example` for the full list.
+
+### Managed fresh agent sessions
+
+Set `WTD_MANAGED_FRESH_CMD` when a project wants a long-lived supervisor to own
+fresh agent sessions. The `o`, `c`, and `e` actions invoke the configured
+command exactly once, from the selected worktree, as:
+
+```text
+<command> <worktree_path> <launch_flag> [extra_args]
+```
+
+An unset or empty value is a strict no-op: those actions continue through
+`WTD_LAUNCH_CMD` or the built-in launcher exactly as before. The manual `r`
+action always bypasses the managed command and keeps its existing
+`WTD_LAST_AGENT_CMD`, native resume-argument, and `WTD_TMUX_RESUME` behavior.
+
+The managed command inherits `WTD_PROJECT_DIR`, `WTD_MANAGED_EVENT_OWNER=1`,
+and the existing `WTD_SESSION_ID`. That session ID is opaque launcher/chain
+metadata; it is not a Claude or Codex native conversation ID. The managed
+command is launched directly, without a second worktree-deck tmux owner. If it
+calls the built-in launcher below itself, the ownership flag suppresses the
+legacy `WTD_EVENT_SINK` lifecycle bridge so only the supervisor emits canonical
+`started`/`completed`/`failed` events.
+
+For example, a project can configure a thin host wrapper:
+
+```bash
+# worktree-deck.conf
+WTD_MANAGED_FRESH_CMD="bash scripts/managed-agent-session.sh"
+```
+
+That wrapper translates the generic deck arguments into the host's current
+[`agent-session-harness`](https://github.com/Boundless-Studios/agent-session-harness)
+contract and supplies all project-owned task identity and adapters:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+worktree_path="$1"
+launch_flag="$2"
+extra_args="${3:-}"
+runtime="${launch_flag#--}"
+runtime_args=()
+if [[ -n "$extra_args" ]]; then
+  runtime_args=(--runtime-arg "$extra_args")
+fi
+
+exec agent-session-harness supervise \
+  --runtime "$runtime" \
+  --cwd "$worktree_path" \
+  --chain-id "${WTD_SESSION_ID:?set stable chain metadata}" \
+  --task-type "${SESSION_TASK_TYPE:?}" \
+  --task-id "${SESSION_TASK_ID:?}" \
+  --task-fingerprint "${SESSION_TASK_FINGERPRINT:?}" \
+  --state "${SESSION_HARNESS_STATE:?}" \
+  --required-capabilities-known \
+  --executable "${SESSION_RUNTIME_EXECUTABLE:-$runtime}" \
+  --usage-adapter "${SESSION_USAGE_ADAPTER_JSON:?}" \
+  --capsule-adapter "${SESSION_CAPSULE_ADAPTER_JSON:?}" \
+  --required-adapter "checkpoint=${SESSION_CHECKPOINT_ADAPTER_JSON:?}" \
+  "${runtime_args[@]}" \
+  --json
+```
+
+The wrapper—not worktree-deck—owns adapter selection, checkpoint policy,
+thresholds, runtime arguments, and stable task identity. A supervisor's
+automatic rotations must always create a fresh native conversation; they never
+route back through `r`, Claude continuation flags, or `codex resume`.
 
 ### Where config is loaded from
 
