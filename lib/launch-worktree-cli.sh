@@ -43,6 +43,10 @@ SESSION_ID="${WTD_SESSION_ID:-wtd-$$-$(git -C "$WORKTREE_PATH" rev-parse --short
 # <launcher_pid> is THIS launcher process ($$) — it stays alive for the whole
 # agent session, so a sink that tracks liveness can treat it as the owning pid.
 _emit_event() {
+    # A managed fresh-session supervisor is the canonical lifecycle owner.
+    # Suppress this legacy bridge when invoked anywhere beneath that owner so
+    # the same child does not produce duplicate started/completed/failed events.
+    [[ "${WTD_MANAGED_EVENT_OWNER:-}" != "1" ]] || return 0
     [[ -n "${WTD_EVENT_SINK:-}" ]] || return 0
     # shellcheck disable=SC2086
     ${WTD_EVENT_SINK} "$1" "$SESSION_ID" "$CLI_COMMAND" "$WORKTREE_PATH" "$$" "${2:-}" >/dev/null 2>&1 || true
@@ -83,7 +87,8 @@ if [[ "${WTD_TMUX_RESUME:-auto}" != "off" \
     # does not depend on `-e` / `update-environment`. WTD_SESSION_ID is included
     # here so event correlation stays stable regardless of tmux version.
     _wtd_env_prefix="env"
-    for _wtd_var in WTD_SESSION_ID WORKTREE_DECK_CONFIG WTD_EVENT_SINK PATH \
+    for _wtd_var in WTD_SESSION_ID WTD_MANAGED_EVENT_OWNER \
+                    WORKTREE_DECK_CONFIG WTD_EVENT_SINK PATH \
                     OPENAI_API_KEY ANTHROPIC_API_KEY GITHUB_TOKEN GH_TOKEN \
                     HOME LANG LC_ALL TERM; do
         if [[ "$_wtd_var" == "WTD_SESSION_ID" ]]; then
