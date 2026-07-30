@@ -78,6 +78,7 @@ create_worktree() {
 
     local branch_name="${task_name}"
     local worktree_path="${WORKTREES_DIR}/${task_name}"
+    local placement_result placement_rc
 
     echo
     echo -e "Creating worktree:"
@@ -85,6 +86,19 @@ create_worktree() {
     echo -e "  Branch: ${CYAN}${branch_name}${NC}"
     echo -e "  Base:   ${CYAN}${base_branch}${NC}"
     echo
+
+    if wtd_execution_target_configured; then
+        placement_rc=0
+        placement_result="$(
+            wtd_evaluate_configured_placement \
+                "$branch_name" "managed_worktree" "$worktree_path"
+        )" || placement_rc=$?
+        if [[ "$placement_rc" -ne 0 ]]; then
+            echo -e "${RED}✗ Worktree placement is incompatible with the configured execution target.${NC}" >&2
+            printf '%s\n' "$placement_result" >&2
+            return 1
+        fi
+    fi
 
     read -p "Proceed? (y/n) [y]: " confirm
     confirm="${confirm:-y}"

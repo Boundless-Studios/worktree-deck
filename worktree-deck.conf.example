@@ -9,6 +9,18 @@
 # WTD_MAIN_REPO="$HOME/code/myapp"
 # WTD_WORKTREES_DIR="$HOME/code/myapp-worktrees"
 
+# --- Placement / execution compatibility (OPTIONAL) ------------------------
+# Leave the target kind empty to preserve legacy creation behavior. When a
+# target requires synchronization, only paths classified as visible are
+# compatible; ignored and unknown paths fail closed.
+# WTD_EXECUTION_TARGET_KIND="remote"       # local | remote
+# WTD_EXECUTION_TARGET_REQUIRES_SYNC="true"
+# WTD_SYNC_VISIBLE_ROOTS=("$HOME/code")
+# WTD_SYNC_IGNORED_ROOTS=("$HOME/scratch")
+#
+# Projects with another visibility source may override the generic hook:
+# wtd_sync_visibility() { printf '%s\n' "visible"; }  # visible|ignored|unknown
+
 # --- Dev stack (OPTIONAL) --------------------------------------------------
 # Container-name templates; {suffix} becomes the per-worktree suffix.
 # WTD_SERVICE_TEMPLATES=("myapp-backend{suffix}" "myapp-frontend{suffix}")
