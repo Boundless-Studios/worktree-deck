@@ -256,6 +256,8 @@ in a worktree, then maps that agent to resume args through
 
 - `lock-health` inspects or repairs the host-global stack-start lock;
 - `run-locked` runs any command under the same lock;
+- `placement-check` emits the versioned placement/target compatibility decision
+  used by creation, so runtime consumers can fail closed before tests/startup;
 - `continue` / `continue-worktree` repoints an existing worktree onto a new
   branch and optionally runs `WTD_ENV_REGEN_CMD`.
 
@@ -273,6 +275,7 @@ agent sessions.
 | `lib/cleanup.sh` | Merged/stale worktree pruning and dead/orphan container cleanup, with the `PR_DATA_REFRESH_TIMED_OUT`-guarded per-branch `gh pr list` fallback. |
 | `lib/terminal.sh` | Terminal-tab/AppleScript launching, legacy and managed-fresh CLI dispatch, agent resume, open frontend/VS Code, logs, e2e. |
 | `lib/config.sh` | Defaults, config loading, hook contract, stack command execution, backend cap. |
+| `lib/worktree-placement.sh` | Canonical path, synchronization visibility, versioned JSON contract, and placement/target compatibility decisions shared by creation and runtime checks. |
 | `lib/docker-reachable.sh` | Docker reachability, remote/local selection, wake/reprobe hooks. |
 | `lib/stack-start-lock.sh` | Host-global `mkdir` lock, owner metadata, stale detection, health/repair. |
 | `lib/continue-worktree.sh` | Generic branch continuation flow for an existing worktree. |
@@ -330,6 +333,7 @@ For shell changes, run syntax and static checks before manual smoke:
 ```bash
 bash -n bin/worktree-deck.sh lib/*.sh
 shellcheck bin/worktree-deck.sh lib/*.sh
+bash test/worktree-placement.sh
 ```
 
 Then smoke the relevant path:

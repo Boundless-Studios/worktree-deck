@@ -22,6 +22,18 @@
 : "${WTD_MAIN_REPO:=}"
 : "${WTD_WORKTREES_DIR:=}"
 
+# Optional execution target for placement compatibility checks. Empty kind
+# preserves legacy creation behavior. A target that requires synchronization
+# accepts only paths classified as visible.
+: "${WTD_EXECUTION_TARGET_KIND:=}"
+: "${WTD_EXECUTION_TARGET_REQUIRES_SYNC:=false}"
+if [[ -z "${WTD_SYNC_VISIBLE_ROOTS+x}" ]]; then
+    WTD_SYNC_VISIBLE_ROOTS=()
+fi
+if [[ -z "${WTD_SYNC_IGNORED_ROOTS+x}" ]]; then
+    WTD_SYNC_IGNORED_ROOTS=()
+fi
+
 # Branch-name prefixes stripped when deriving a worktree's short tag/suffix.
 : "${WTD_BRANCH_PREFIXES:=feature fix chore hotfix release}"
 # Max length of the derived tag (keeps container names bounded).
@@ -399,6 +411,8 @@ wtd_backend_cap_ok() {
 # Source the optional capability libs (start-lock serialization, continue-
 # worktree) so their functions are available to the console and CLI subcommands.
 _WTD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=worktree-placement.sh
+[[ -r "$_WTD_LIB_DIR/worktree-placement.sh" ]] && source "$_WTD_LIB_DIR/worktree-placement.sh"
 # shellcheck source=stack-start-lock.sh
 [[ -r "$_WTD_LIB_DIR/stack-start-lock.sh" ]] && source "$_WTD_LIB_DIR/stack-start-lock.sh"
 # shellcheck source=continue-worktree.sh

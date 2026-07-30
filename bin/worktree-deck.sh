@@ -9,7 +9,7 @@ set -euo pipefail
 # `printf ... | wc -l`. They run headless (agents/CI), so they must dispatch
 # before the guard that would otherwise delegate to coreutils `wc`.
 case "${1:-}" in
-    lock-health|continue|continue-worktree|run-locked)
+    lock-health|continue|continue-worktree|placement-check|run-locked)
         _WTD_SUBCMD="$1"; shift
         _WTD_SD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
         _WTD_LD="$(cd "${_WTD_SD}/../lib" && pwd)"
@@ -22,6 +22,17 @@ case "${1:-}" in
                 wtd_stack_start_lock_health "$@"; exit $? ;;
             continue|continue-worktree)
                 wtd_continue_worktree "$@"; exit $? ;;
+            placement-check)
+                [[ $# -ge 1 && $# -le 3 ]] || {
+                    echo "usage: worktree-deck placement-check <path> [identity] [class]" >&2
+                    exit 2
+                }
+                _wtd_pc_path="$1"
+                _wtd_pc_identity="${2:-$(basename "$_wtd_pc_path")}"
+                _wtd_pc_class="${3:-managed_worktree}"
+                wtd_evaluate_configured_placement \
+                    "$_wtd_pc_identity" "$_wtd_pc_class" "$_wtd_pc_path"
+                exit $? ;;
             run-locked)
                 # Run an arbitrary command under the host-global stack-start lock,
                 # ALWAYS serialized (independent of WTD_SERIALIZE_STACK_START, which

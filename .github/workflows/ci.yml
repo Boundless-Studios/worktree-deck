@@ -66,6 +66,7 @@ jobs:
           bash test/launch-worktree-cli.sh
           bash test/refresh-pr-data-timeout.sh
           bash test/render-timestamps.sh
+          bash test/worktree-placement.sh
 
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@master

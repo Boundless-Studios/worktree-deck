@@ -291,6 +291,13 @@ WTD_ENV_CONTAINER_KEYS="BACKEND_CONTAINER_NAME FRONTEND_CONTAINER_NAME"
 # --- agents you can launch in a worktree (first = default) ---
 WTD_AGENT_LAUNCHERS=(claude codex)
 
+# --- optional: fail closed when the worktree location is incompatible with
+# an execution target that requires synchronized files ---
+# WTD_EXECUTION_TARGET_KIND="remote"       # local | remote
+# WTD_EXECUTION_TARGET_REQUIRES_SYNC="true"
+# WTD_SYNC_VISIBLE_ROOTS=("$HOME/code")
+# WTD_SYNC_IGNORED_ROOTS=("$HOME/scratch")
+
 # --- optional: run stacks on a beefier remote Docker host over SSH ---
 WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 # WTD_REMOTE_TUNNEL_CMD="bash scripts/start-tunnel.sh"   # ensure localhost:<port> resolves
@@ -321,6 +328,56 @@ WTD_REMOTE_DOCKER_HOST="ssh://user@build-box"
 
 Every value is optional and has a project-agnostic default; any `WTD_*` can also
 come from the environment. See `worktree-deck.conf.example` for the full list.
+
+### Placement compatibility
+
+Configure an execution target when worktrees must be visible to another
+environment before they can be used. `worktree-deck` evaluates the destination
+before `git worktree add` and rejects ignored or unknown paths whenever
+`WTD_EXECUTION_TARGET_REQUIRES_SYNC` is true. It never silently switches the
+target to local execution.
+
+`WTD_SYNC_VISIBLE_ROOTS` and `WTD_SYNC_IGNORED_ROOTS` are arrays of path roots.
+Ignored roots take precedence. Projects with a different visibility source may
+override `wtd_sync_visibility <path>` and return exactly `visible`, `ignored`,
+or `unknown`.
+
+Runtime consumers repeat the same decision with:
+
+```bash
+bash bin/worktree-deck.sh placement-check <path> [identity] [class]
+```
+
+The command exits `0` for compatible, `1` for incompatible, and `2` for invalid
+or missing contract configuration. Every outcome writes one deterministic JSON
+object using `worktree-placement-compatibility/v1`:
+
+```json
+{
+  "schema_version": "1.0",
+  "contract": "worktree-placement-compatibility/v1",
+  "placement": {
+    "schema_version": "1.0",
+    "identity": "feature-branch",
+    "class": "managed_worktree",
+    "path": "/canonical/path/to/worktree",
+    "sync_visibility": "visible"
+  },
+  "execution_target": {
+    "kind": "remote",
+    "requires_sync": true
+  },
+  "decision": {
+    "compatible": true,
+    "reason_code": "sync_visibility_confirmed",
+    "remediation": ""
+  }
+}
+```
+
+An unset `WTD_EXECUTION_TARGET_KIND` preserves existing interactive creation
+behavior. The headless check treats the missing target as an invalid contract so
+automation cannot synthesize compatibility.
 
 ### Managed fresh agent sessions
 
