@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 text="$(<"$ROOT/lib/continue-worktree.sh")"
 [[ "$text" == *'WTD_BRANCH_TRANSITION_SINK} "$WTD_SESSION_ID"'* ]]
+[[ "$text" == *'( cd "$worktree_path" && ${WTD_BRANCH_TRANSITION_SINK}'* ]]
 transition="${text%%WTD_BRANCH_TRANSITION_SINK*}"
 push="${text%%git -C \"\$worktree_path\" push -u origin*}"
 [[ ${#transition} -lt ${#push} ]]
