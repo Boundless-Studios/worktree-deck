@@ -166,11 +166,13 @@ wtd_continue_worktree() {
             "$current_branch" "$new_branch" >/dev/null 2>&1 || {
             echo "❌ Could not record attributed branch transition; refusing to push." >&2
             local restore_target="${current_branch:-$original_head}"
+            local rollback_ok=0
             if [[ -n "$restore_target" ]]; then
                 git -C "$worktree_path" checkout "$restore_target" 2>/dev/null \
-                    || echo "⚠️  Could not return to '$restore_target'; transition was not recorded." >&2
+                    && rollback_ok=1 \
+                    || echo "⚠️  Could not return to '$restore_target'; transition was not recorded and the stash was left intact." >&2
             fi
-            if [[ "$stashed" -eq 1 ]]; then
+            if [[ "$stashed" -eq 1 && "$rollback_ok" -eq 1 ]]; then
                 echo "↩️  Restoring auto-stashed changes on '${current_branch:-the original commit}'..." >&2
                 _wtd_stash_pop_ref "$worktree_path" "$stash_sha" \
                     || echo "⚠️  Could not auto-restore stash $stash_sha; restore it manually." >&2
