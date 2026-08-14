@@ -159,6 +159,16 @@ wtd_continue_worktree() {
         return 1
     fi
 
+    # A supported continuation is not sibling drift. Attribute the transition
+    # to the active session before the implicit push fires post-push/Stop hooks.
+    if [[ -n "${WTD_BRANCH_TRANSITION_SINK:-}" && -n "${WTD_SESSION_ID:-}" ]]; then
+        ${WTD_BRANCH_TRANSITION_SINK} "$WTD_SESSION_ID" "$worktree_path" \
+            "$current_branch" "$new_branch" >/dev/null 2>&1 || {
+            echo "❌ Could not record attributed branch transition; refusing to push." >&2
+            return 1
+        }
+    fi
+
     echo "✓ Pushing '$new_branch' with upstream tracking..."
     git -C "$worktree_path" push -u origin "$new_branch" || {
         git -C "$worktree_path" branch --unset-upstream 2>/dev/null || true

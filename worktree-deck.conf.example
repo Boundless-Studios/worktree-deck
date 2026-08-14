@@ -66,6 +66,7 @@ WTD_AGENT_LAUNCHERS=(claude codex)
 
 # --- Optional: bridge session events to another tool -----------------------
 # WTD_EVENT_SINK="agentic-pr-dash record"
+# WTD_BRANCH_TRANSITION_SINK="agentic-pr-dash session transition"
 
 # --- Optional: project-owned agent launchers -------------------------------
 # Override the legacy fresh + manual-resume launcher. Receives:

@@ -110,6 +110,11 @@ declare -gA WTD_DAEMON_CMD WTD_DAEMON_URL WTD_DAEMON_TYPE WTD_DAEMON_PATTERN 2>/
 # (e.g. "agentic-pr-dash record"). Empty => no session bridge.
 : "${WTD_EVENT_SINK:=}"
 
+# Optional attributed branch-transition sink. Invoked after continue-worktree
+# successfully changes branches as:
+#   <cmd> <session_id> <worktree_path> <from_branch> <to_branch>
+: "${WTD_BRANCH_TRANSITION_SINK:=}"
+
 # Optional: override the launcher the console runs for the [o]pen/[c]laude/[e]codex
 # and resume actions. Invoked as `<cmd> <worktree_path> <launch_flag> [extra_args]`
 # (same contract as the built-in lib/launch-worktree-cli.sh). Set this to a
