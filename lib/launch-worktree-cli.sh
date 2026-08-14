@@ -89,7 +89,7 @@ if [[ "${WTD_TMUX_RESUME:-auto}" != "off" \
     # here so event correlation stays stable regardless of tmux version.
     _wtd_env_prefix="env"
     for _wtd_var in WTD_SESSION_ID WTD_MANAGED_EVENT_OWNER \
-                    WORKTREE_DECK_CONFIG WTD_EVENT_SINK PATH \
+                    WORKTREE_DECK_CONFIG WTD_EVENT_SINK WTD_BRANCH_TRANSITION_SINK PATH \
                     OPENAI_API_KEY ANTHROPIC_API_KEY GITHUB_TOKEN GH_TOKEN \
                     HOME LANG LC_ALL TERM; do
         if [[ "$_wtd_var" == "WTD_SESSION_ID" ]]; then

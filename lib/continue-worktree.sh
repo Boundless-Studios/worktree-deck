@@ -159,6 +159,28 @@ wtd_continue_worktree() {
         return 1
     fi
 
+    # A supported continuation is not sibling drift. Attribute the transition
+    # to the active session before the implicit push fires post-push/Stop hooks.
+    if [[ -n "${WTD_BRANCH_TRANSITION_SINK:-}" && -n "${WTD_SESSION_ID:-}" ]]; then
+        ( cd "$worktree_path" && ${WTD_BRANCH_TRANSITION_SINK} "$WTD_SESSION_ID" "$worktree_path" \
+            "$current_branch" "$new_branch" >/dev/null 2>&1 || {
+            echo "❌ Could not record attributed branch transition; refusing to push." >&2
+            local restore_target="${current_branch:-$original_head}"
+            local rollback_ok=0
+            if [[ -n "$restore_target" ]]; then
+                git -C "$worktree_path" checkout "$restore_target" 2>/dev/null \
+                    && rollback_ok=1 \
+                    || echo "⚠️  Could not return to '$restore_target'; transition was not recorded and the stash was left intact." >&2
+            fi
+            if [[ "$stashed" -eq 1 && "$rollback_ok" -eq 1 ]]; then
+                echo "↩️  Restoring auto-stashed changes on '${current_branch:-the original commit}'..." >&2
+                _wtd_stash_pop_ref "$worktree_path" "$stash_sha" \
+                    || echo "⚠️  Could not auto-restore stash $stash_sha; restore it manually." >&2
+            fi
+            exit 1
+        } ) || return 1
+    fi
+
     echo "✓ Pushing '$new_branch' with upstream tracking..."
     git -C "$worktree_path" push -u origin "$new_branch" || {
         git -C "$worktree_path" branch --unset-upstream 2>/dev/null || true
