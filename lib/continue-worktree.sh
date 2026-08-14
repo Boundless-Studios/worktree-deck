@@ -165,8 +165,13 @@ wtd_continue_worktree() {
         ${WTD_BRANCH_TRANSITION_SINK} "$WTD_SESSION_ID" "$worktree_path" \
             "$current_branch" "$new_branch" >/dev/null 2>&1 || {
             echo "❌ Could not record attributed branch transition; refusing to push." >&2
+            local restore_target="${current_branch:-$original_head}"
+            if [[ -n "$restore_target" ]]; then
+                git -C "$worktree_path" checkout "$restore_target" 2>/dev/null \
+                    || echo "⚠️  Could not return to '$restore_target'; transition was not recorded." >&2
+            fi
             if [[ "$stashed" -eq 1 ]]; then
-                echo "↩️  Restoring auto-stashed changes on '$new_branch'..." >&2
+                echo "↩️  Restoring auto-stashed changes on '${current_branch:-the original commit}'..." >&2
                 _wtd_stash_pop_ref "$worktree_path" "$stash_sha" \
                     || echo "⚠️  Could not auto-restore stash $stash_sha; restore it manually." >&2
             fi

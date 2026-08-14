@@ -7,5 +7,9 @@ transition="${text%%WTD_BRANCH_TRANSITION_SINK*}"
 push="${text%%git -C \"\$worktree_path\" push -u origin*}"
 [[ ${#transition} -lt ${#push} ]]
 [[ "$text" == *'Restoring auto-stashed changes'* ]]
+sink_failure="${text#*Could not record attributed branch transition}"
+sink_failure="${sink_failure%%return 1*}"
+[[ "$sink_failure" == *'restore_target="${current_branch:-$original_head}"'* ]]
+[[ "$sink_failure" == *'checkout "$restore_target"'* ]]
 grep -q 'WTD_BRANCH_TRANSITION_SINK PATH' "$ROOT/lib/launch-worktree-cli.sh"
 echo "continue-lineage: PASS"
