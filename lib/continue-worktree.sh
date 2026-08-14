@@ -165,6 +165,11 @@ wtd_continue_worktree() {
         ${WTD_BRANCH_TRANSITION_SINK} "$WTD_SESSION_ID" "$worktree_path" \
             "$current_branch" "$new_branch" >/dev/null 2>&1 || {
             echo "❌ Could not record attributed branch transition; refusing to push." >&2
+            if [[ "$stashed" -eq 1 ]]; then
+                echo "↩️  Restoring auto-stashed changes on '$new_branch'..." >&2
+                _wtd_stash_pop_ref "$worktree_path" "$stash_sha" \
+                    || echo "⚠️  Could not auto-restore stash $stash_sha; restore it manually." >&2
+            fi
             return 1
         }
     fi
